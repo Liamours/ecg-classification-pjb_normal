@@ -1,6 +1,6 @@
 # ecg-classification-pjb_normal
 
-NORMAL vs PJB (congenital heart disease) classification from ECG images and digitized signals. Code, configs, and scripts only; datasets, checkpoints, and outputs live in the project root folders (`datasets/`, `models/`, `inferences/`, `logs/`), reached through `configs/paths.yml` (`@inferences/<run>`, `@mac400-scan/...`).
+NORMAL vs PJB (congenital heart disease) classification from ECG images and digitized signals. Code, configs, and scripts only; datasets, checkpoints, and outputs live in the project root folders (`datasets/`, `models/`, `results/inferences/`, `logs/`), reached through `configs/paths.yml` (`@inferences/<run>`, `@mac400-scan/...`).
 
 ## Flow
 
