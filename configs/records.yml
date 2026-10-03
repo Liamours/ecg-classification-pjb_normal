@@ -1,0 +1,7 @@
+fs: 500            # Hz the leads are resampled to: PTB-XL's native rate, the pretraining source named in wiki/research/short_duration_classifier_stack.md
+duration_s: 4.0    # length of the stored window; a MAC 400 strip holds about 3 to 4 s, shorter leads are padded with NaN at the end
+leads: [I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6]
+usable:            # a record counts as usable when at least this many leads pass the digitizer's quality flag
+  min_ok_leads: 12
+label_column: diagnosis_label
+log_dir: '@logs'

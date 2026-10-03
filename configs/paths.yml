@@ -1,0 +1,10 @@
+roots:
+  datasets: ../../datasets
+  models: ../../models
+  inferences: ../../inferences
+  logs: ../../logs
+datasets:   # alias: folder name under datasets/. The alias is the folder name without its ecg-/ekg- prefix; after renaming a folder on disk, change the right-hand name here
+  mac400-phone_photo: ecg-mac400-phone_photo
+  mac400-scan: ecg-mac400-scan
+  esta: ekg-esta
+  ptb-xl: ptb-xl
