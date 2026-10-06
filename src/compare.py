@@ -165,7 +165,7 @@ def main() -> None:
             "pages_with_different_label_sets": float((preds[a] != preds[b]).any(1).mean()), "label_disagreement_rate": float((preds[a] != preds[b]).mean())}
            for a, b in combinations(preds, 2)]
     write(out / "disagreement.csv", dis)
-    keys = ["macro_auroc_10plus", "macro_auprc_10plus", "micro_f1", "macro_f1", "hamming_loss", "exact_set_accuracy", "mean_jaccard"]
+    keys = ["micro_f1", "macro_f1", "exact_set_accuracy", "hamming_loss", "mean_jaccard"]  # F1 leads the report (user, 2026-10-06); AUROC stays in the CSV files
     print("| Model | Level | " + " | ".join(keys) + " |\n|" + "---|" * (len(keys) + 2))
     for model in feats:
         for name in ("overall", "group", "diagnosis"):
