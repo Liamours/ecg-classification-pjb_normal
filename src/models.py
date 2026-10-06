@@ -3,7 +3,9 @@
 An adapter has `prep` (a picklable callable run in the data-loader workers: a 12 x 2000 record in mV at 500 Hz, NaN where a
 lead has no data, to the model's input array), `load(device)` and `forward(batch)` (the activated outputs). `labels` lists the
 output names of a model with a label head; an encoder without one has `labels = None` and returns its embedding.
-`fill` sets how a lead shorter than the model input reaches its length: `zero` leaves it missing and lets the model's
+`output: embedding` in the config makes ECGFounder and ECG-FM return their embedding instead of their label outputs (ECGFounder:
+the deep features before its output layer, Net1D `return_features`; ECG-FM: encoder output averaged over its non-zero entries,
+`encoder_out_to_emb` of infer_quickstart.ipynb). `fill` sets how a lead shorter than the model input reaches its length: `zero` leaves it missing and lets the model's
 upstream rule fill it, `tile` repeats the lead's digitized stretch.
 
 | Model | Upstream code used | Input |
@@ -116,19 +118,22 @@ class ECGJEPAPrep:
 class ECGFounder:
     def __init__(self, cfg: dict):
         self.cfg, self.prep = cfg, ECGFounderPrep(cfg["fill"])
-        self.labels = [t.strip() for t in (THIRD / "ecgfounder/tasks.txt").read_text(encoding="utf-8").splitlines() if t.strip()]
+        self.tasks = [t.strip() for t in (THIRD / "ecgfounder/tasks.txt").read_text(encoding="utf-8").splitlines() if t.strip()]
+        self.embedding = cfg.get("output") == "embedding"
+        self.labels = None if self.embedding else self.tasks
 
     def load(self, device: str) -> None:
         _path("ecgfounder")
         from net1d import Net1D
         self.net = Net1D(in_channels=12, base_filters=64, ratio=1, filter_list=[64, 160, 160, 400, 400, 1024, 1024], m_blocks_list=[2, 2, 2, 3, 3, 4, 4],
-                         kernel_size=16, stride=2, groups_width=16, verbose=False, use_bn=False, use_do=False, n_classes=len(self.labels))  # ptbxl_eval.py
+                         kernel_size=16, stride=2, groups_width=16, verbose=False, use_bn=False, use_do=False, n_classes=len(self.tasks),
+                         return_features=self.embedding)  # ptbxl_eval.py
         checkpoint = torch.load(paths.resolve(self.cfg["weights"]), map_location="cpu", weights_only=False)  # the upstream file also pickles its scheduler, which weights_only=True refuses
         self.net.load_state_dict(checkpoint["state_dict"], strict=True)
         self.net.to(device).eval()
 
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
-        return torch.sigmoid(self.net(batch))
+        return self.net(batch)[1] if self.embedding else torch.sigmoid(self.net(batch))
 
 
 class HuBERTECG:
@@ -149,8 +154,9 @@ class HuBERTECG:
 class ECGFM:
     def __init__(self, cfg: dict):
         self.cfg, self.prep = cfg, ECGFMPrep(cfg["fill"])
+        self.embedding = cfg.get("output") == "embedding"
         with (THIRD / "ecg_fm/label_def.csv").open(encoding="utf-8") as fh:
-            self.labels = [r["name"] for r in csv.DictReader(fh)]
+            self.labels = None if self.embedding else [r["name"] for r in csv.DictReader(fh)]
 
     def load(self, device: str) -> None:
         _path("")
@@ -158,7 +164,11 @@ class ECGFM:
         self.net = build_model_from_checkpoint(checkpoint_path=str(paths.resolve(self.cfg["weights"]))).to(device).eval()
 
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
-        return torch.sigmoid(self.net(source=batch)["out"])
+        out = self.net(source=batch)
+        if self.embedding:
+            x = out["encoder_out"]
+            return torch.div(x.sum(dim=1), (x != 0).sum(dim=1))  # infer_quickstart.ipynb encoder_out_to_emb
+        return torch.sigmoid(out["out"])
 
 
 class MERL:

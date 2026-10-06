@@ -4,7 +4,7 @@ Input per page: <run>/<page>/record.csv (12 leads in mV, 500 Hz, empty where a l
 Output per dataset: <out_dir>/<dataset>/predictions.csv (model with a label head: one column per output) or embeddings.csv
 (encoder: one column per embedding dimension), each row with page, relative_path, label and leads_ok.
 
-Long runs: a log in `log_dir` with progress, pages per second and ETA over all pages still to do; resumable (rows are
+Long runs: one progress line (bar, pages per second, ETA over all pages still to do) and a log in `log_dir`; resumable (rows are
 appended after each batch and pages already in the output are skipped); preprocessing runs in `workers` data-loader
 processes while the model runs on the GPU when there is one.
 
@@ -15,18 +15,17 @@ import argparse
 import csv
 import json
 import logging
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import torch
 import yaml
 from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm
 
 from src import paths
 from src.models import MODELS
+from src.progress import Progress
 from src.records import load_labels, source_key
 
 META = ["page", "relative_path", "label", "leads_ok"]
@@ -82,13 +81,13 @@ def main() -> None:
         todo[dataset] = (out, [p.parent for p in sorted(paths.resolve(run).glob("*/record.json")) if p.parent.name not in done])
     total = sum(len(t[1]) for t in todo.values())
     log.info("start %s on %s, %d pages to do, %d outputs per page, config %s", cfg["model"], device, total, len(columns), cfg)
-    finished, start = 0, time.time()
+    bar = Progress(total, out_root.name, "pages", log)
     for dataset, (out, pages) in todo.items():
         if not pages:
             continue
         loader = DataLoader(Pages(pages, model.prep), batch_size=cfg["batch_size"], num_workers=cfg["workers"], pin_memory=device == "cuda", persistent_workers=False)
         labels = {}
-        for x, names, folders, rels, leads_ok in tqdm(loader, desc=dataset, unit="batch"):
+        for x, names, folders, rels, leads_ok in loader:
             with torch.inference_mode():
                 y = model.forward(x.to(device, non_blocking=True)).float().cpu().numpy()
             rows = []
@@ -98,11 +97,8 @@ def main() -> None:
                 rows.append([page, rels[i], labels[folders[i]].get(rels[i], ""), int(leads_ok[i])] + [f"{v:.5f}" for v in y[i]])
             with out.open("a", newline="", encoding="utf-8") as fh:  # the output file is the progress record: a crash repeats at most one batch
                 csv.writer(fh).writerows(rows)
-            finished += len(rows)
-            rate = finished / (time.time() - start)
-            log.info("%s: %d of %d pages, %.1f pages/s, ETA %s", dataset, finished, total, rate, timedelta(seconds=round((total - finished) / rate)))
-    log.info("done %s: %d pages in %s", cfg["model"], finished, timedelta(seconds=round(time.time() - start)))
-    print(f"{cfg['model']}: {finished} pages written to {out_root} in {timedelta(seconds=round(time.time() - start))}")
+            bar.step(len(rows), dataset)
+    bar.close()
 
 
 if __name__ == "__main__":

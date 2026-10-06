@@ -1,0 +1,29 @@
+dataset: mac400-phone_photo         # labeled set: probed with the nested folds
+predict: [mac400-scan]              # unlabeled sets: scored by a probe fit on every labeled page
+label_column: diagnosis_label
+detailed_column: diagnosis_labels_detailed
+groups_config: configs/label_schema.yml   # ACC-CHD group of each detailed label
+unknown_label: diagnosis unknown    # a PJB page whose file name carries no diagnosis, at both levels, so it is not read as NORMAL
+merge:                              # variant name: parent diagnosis
+  AVSD INCOMPLETE: AVSD
+  CAVSD: AVSD
+  EXTREME TOF: TOF
+  PENTALOGY OF FALLOT: TOF
+  CRITICAL PS: PS
+  LARGE PDA: PDA
+  MULTIPLE ASD: ASD
+folds: '@mac400-phone_photo/_labels/manifest_folds.csv'   # src.split: per repeat and fold, each page's role (train, val, test)
+models:                             # name: run folder under @inferences holding <dataset>/embeddings.csv (written by src.infer)
+  ecgfounder: infer-ecgfounder_emb
+  ecgfounder_tile: infer-ecgfounder_tile_emb
+  ecg_fm: infer-ecg_fm_emb
+  ecg_fm_tile: infer-ecg_fm_tile_emb
+  ecg_jepa_multiblock: infer-ecg_jepa_multiblock
+  ecg_jepa_random: infer-ecg_jepa_random
+C_grid: [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0]   # L2 inverse strength, chosen per label on val by average precision (log-spaced sweep as in CLIP's linear-probe evaluation, Radford et al. 2021)
+class_weight: balanced              # positives and negatives of a label weigh equally
+max_iter: 3000
+jobs: 4                             # labels fitted in parallel; a quarter of the 16 logical cores (one heavy job at a time, wiki/overview/hardware.md)
+out_dir: '@inferences/linear_probe'
+report_dir: '@analyses/linear_probe'
+log_dir: '@logs'

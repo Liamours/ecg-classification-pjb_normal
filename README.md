@@ -73,3 +73,11 @@ uv run python -m src.label_schema --config configs/label_schema.yml
 uv run python -m src.probe --config configs/probe/ecg_jepa_multiblock.yml
 uv run python -m src.probe --config configs/probe/ecg_jepa_random.yml
 ```
+
+## Linear probe (all models)
+
+`scripts/run_linear_probe.ps1` runs, in PowerShell, the embedding inference of every model with an adapter (`configs/infer/*_emb.yml` and the ECG-JEPA configs; `output: embedding` in a config makes ECGFounder and ECG-FM write their embedding) and then `src.linear_probe` (`configs/linear_probe.yml`): per model, repeat and outer fold of `manifest_folds.csv`, one logistic regression per label of the hierarchical schema on the standardized embedding, the L2 strength chosen per label on val by average precision, the threshold per label chosen on val to maximize F1, the test fold scored once; then a probe on every labeled page scores the scans. Output in `results/inferences/linear_probe/<model>/` (`oof_r<repeat>.csv`, `mac400-scan_predictions.csv`, `parts/`) and `results/analyses/linear_probe/` (`summary.csv`, `per_label.csv`, F1 by level). One progress line with ETA, logs in `logs/`, every step resumable.
+
+```
+.\scripts\run_linear_probe.ps1
+```
