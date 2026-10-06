@@ -1,0 +1,30 @@
+dataset: mac400-phone_photo
+predict: {mac400-scan: '@inferences/canonical_mac400-scan'}   # unlabeled set scored by the finished model
+run: '@inferences/canonical_mac400-phone_photo'
+label_column: diagnosis_label
+detailed_column: diagnosis_labels_detailed
+groups_config: configs/label_schema.yml
+unknown_label: diagnosis unknown
+merge:
+  AVSD INCOMPLETE: AVSD
+  CAVSD: AVSD
+  EXTREME TOF: TOF
+  PENTALOGY OF FALLOT: TOF
+  CRITICAL PS: PS
+  LARGE PDA: PDA
+  MULTIPLE ASD: ASD
+folds: '@mac400-phone_photo/_labels/manifest_folds.csv'
+split: {repeat: 1, fold: 1}         # one split of the nested folds: train, val (early stopping, thresholds), test (scored once)
+model: ecgfounder
+spec: {config: configs/infer/ecgfounder_tile_emb.yml, batch_size: 32, frozen: [dense.]}   # its 150-label output layer is not used
+lr: {backbone: 1.0e-5, head: 1.0e-4}
+weight_decay: 0.01
+max_epochs: 60                      # the folds run hit the 30-epoch cap on 5 of 15 folds
+patience: 8
+pos_weight_max: 50
+augment: {amplitude: 0.1, noise: 0.02, shift: 0.1}
+workers: 4
+seed: 42
+out_dir: '@inferences/finetune_single'
+report_dir: '@analyses/finetune_single'
+log_dir: '@logs'

@@ -97,8 +97,9 @@ def scores(net: Net, x: np.ndarray, bs: int, device: str) -> np.ndarray:
     return np.concatenate(out)
 
 
-def train(spec, cfg, x, y, train_idx, val_idx, parent, epochs_fixed, ckpt: Path, device, note, log) -> tuple[Net, dict, int]:
-    """Train on train_idx; early stopping on val micro F1 (or a fixed epoch count when val_idx is empty). Resumes from ckpt."""
+def train(spec, cfg, x, y, train_idx, val_idx, parent, epochs_fixed, ckpt: Path, device, note, log, on_epoch=None) -> tuple[Net, dict, int]:
+    """Train on train_idx; early stopping on val micro F1 (or a fixed epoch count when val_idx is empty). Resumes from ckpt.
+    `on_epoch(state, loss, best_text)` replaces the default epoch line when given."""
     torch.manual_seed(cfg["seed"])
     net = build(spec, y.shape[1], device)
     groups = [{"params": [p for p in net.backbone.parameters() if p.requires_grad], "lr": cfg["lr"]["backbone"]}, {"params": net.head.parameters(), "lr": cfg["lr"]["head"]}]
@@ -130,10 +131,19 @@ def train(spec, cfg, x, y, train_idx, val_idx, parent, epochs_fixed, ckpt: Path,
             scaler.update()
             total += loss.item() * len(b)
         state["epoch"] += 1
+        row = {"epoch": state["epoch"], "train_loss": total / len(train_idx), "lr_backbone": opt.param_groups[0]["lr"], "lr_head": opt.param_groups[1]["lr"]}
         if len(val_idx):
             prob = scores(net, x[val_idx], spec["batch_size"], device)
             t = choose(prob, y[val_idx], parent)
-            f1 = _micro(y[val_idx], predict(prob, t, parent))
+            pred = predict(prob, t, parent)
+            f1 = _micro(y[val_idx], pred)
+            logit = torch.logit(torch.from_numpy(prob).clamp(1e-6, 1 - 1e-6)).to(device)
+            row["val_loss"] = loss_fn(logit, torch.from_numpy(y[val_idx].astype(np.float32)).to(device)).item()
+            row |= {"threshold_group": t["group"], "threshold_diagnosis": t["diagnosis"]}
+            names = [f"group: {j}" if parent[j] < 0 else f"diagnosis: {j}" for j in range(y.shape[1])]
+            for level, m in metrics(y[val_idx], pred, names)[1].items():
+                row |= {f"val_{level}_{k}": v for k, v in m.items()}
+            row["is_best"] = int(f1 > state["best_f1"])
             if f1 > state["best_f1"]:
                 state.update(best_f1=f1, best_epoch=state["epoch"], stale=0, thresholds=t)
                 torch.save(net.state_dict(), best_path)
@@ -142,12 +152,29 @@ def train(spec, cfg, x, y, train_idx, val_idx, parent, epochs_fixed, ckpt: Path,
         else:
             torch.save(net.state_dict(), best_path)
             state["best_epoch"] = state["epoch"]
-        torch.save({"model": net.state_dict(), "opt": opt.state_dict(), "scaler": scaler.state_dict(), "state": state}, ckpt)
+        row |= {"best_epoch": state["best_epoch"], "epochs_without_improvement": state["stale"], "seconds": time.time() - t0}
+        history(ckpt, row, state["epoch"])
+        torch.save({"model": net.state_dict(), "opt": opt.state_dict(), "scaler": scaler.state_dict(), "state": state}, ckpt)  # latest weights; the best are in best_path
         best = f"val micro F1 best {state['best_f1']:.4f} (epoch {state['best_epoch']})" if len(val_idx) else "no validation, fixed epoch count"
         log.info("%s: epoch %d, train loss %.4f, %s, %s", note, state["epoch"], total / len(train_idx), best, clock(time.time() - t0))
-        print(f"\r    {note}: epoch {state['epoch']}/{max_epochs}, loss {total / len(train_idx):.4f}, {best}".ljust(110), end="", flush=True)
+        if on_epoch:
+            on_epoch(state, total / len(train_idx), best)
+        else:
+            print(f"\r    {note}: epoch {state['epoch']}/{max_epochs}, loss {total / len(train_idx):.4f}, {best}".ljust(110), end="", flush=True)
     net.load_state_dict(torch.load(best_path, map_location=device, weights_only=True))
     return net, state["thresholds"], state["best_epoch"]
+
+
+def history(ckpt: Path, row: dict, epoch: int) -> None:
+    """Append one epoch to `<checkpoint>_epochs.csv` (train loss, val loss, thresholds, val metrics per level, best epoch, time),
+    dropping rows past `epoch` first, which a stop between the history write and the checkpoint write can leave behind."""
+    path = ckpt.with_name(ckpt.stem + "_epochs.csv")
+    old = list(csv.DictReader(path.open(encoding="utf-8"))) if path.exists() else []
+    rows = [r for r in old if int(r["epoch"]) < epoch] + [{k: f"{v:.6f}" if isinstance(v, float) else v for k, v in row.items()}]
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[-1]))
+        w.writeheader()
+        w.writerows(rows)
 
 
 def _micro(y: np.ndarray, pred: np.ndarray) -> float:
