@@ -5,17 +5,10 @@ groups_config: configs/label_schema.yml   # ACC-CHD group of each detailed label
 C: 1.0                 # scikit-learn's stock L2 strength on standardized features, not tuned
 class_weight: balanced # each label's positives and negatives weigh equally, so the 0.5 threshold is not set by prevalence
 threshold: 0.5
-out_dir: '@analyses/compare_schemas'
-unknown_label: CHD, diagnosis unknown   # a CHD page whose file name carries no diagnosis, so it is not read as NORMAL
-schemas:               # NORMAL is the empty label set in every schema: a page with no label predicted is NORMAL
-  binary: {kind: binary}                                   # 1 label, CHD
-  first_listed: {kind: first}                              # first diagnosis in the file name, one label per CHD page
-  groups_all: {kind: group}                                # every ACC-CHD group
-  diagnoses_merged_all: {kind: merged}                     # every diagnosis, variant names merged into their parent
-  diagnoses_all: {kind: diagnosis}                         # every diagnosis as written
-  tree_all: {kind: tree}                                   # CHD, every group and every diagnosis at once
-  groups_min10: {kind: group, min_pages: 10, fallback: other CHD}       # reference: the early comparison's group schema
-  diagnoses_min10: {kind: diagnosis, min_pages: 10, fallback: other CHD} # reference: the early comparison's diagnosis schema
+out_dir: '@analyses/compare_hierarchy'
+folds: '@mac400-phone_photo/_labels/manifest_folds.csv'   # nested cross-validation folds of src.split; the probe fits on train and val, scores test
+min_pages: 10          # macro AUROC and AUPRC are averaged over labels with at least this many pages
+unknown_label: diagnosis unknown   # a PJB page whose file name carries no diagnosis, at both levels, so it is not read as NORMAL
 merge:                 # variant name: parent diagnosis
   AVSD INCOMPLETE: AVSD
   CAVSD: AVSD
@@ -37,14 +30,6 @@ runs:                  # run folder under @inferences: features are its saved pr
   merl_res18_tile: infer-merl_res18_tile
   merl_vit_tiny: infer-merl_vit_tiny
   merl_vit_tiny_tile: infer-merl_vit_tiny_tile
-batches:               # collection batch of each source folder; folds hold out one batch at a time
-  NORMAL: undated
-  PJB: undated
-  NORMAL 17.12.2024: 17.12.2024
-  PJB 17.12.2024: 17.12.2024
-  NORMAL 20.12.2024: 19-20.12.2024
-  PJB 19.12.2024: 19-20.12.2024
-  NORMAL Tambahan: Tambahan
 chd_findings:          # pediatric ECG findings tied to congenital heart defects; a model output whose name matches one counts as fitting our labels
   right ventricular hypertrophy: '\bRIGHT VENTRICULAR HYPERTROPHY\b|\bRVH\b'
   right axis deviation: '\bRIGHT AXIS\b|\bRIGHTWARD AXIS\b|\bRIGHT SUPERIOR AXIS\b|\bRAD\b'

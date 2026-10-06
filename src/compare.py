@@ -1,16 +1,16 @@
-"""Comparison of pretrained models on every label schema of our CHD labels, one protocol for every model and schema.
+"""Comparison of pretrained models on the chosen label schema, one protocol for every model.
 
-Features: each model run's saved per-page outputs (`predictions.csv` label outputs or `embeddings.csv`). Labels: the schemas of
-the config on the labeled phone photos (`label_matrix`). In every schema NORMAL is the empty label set and a page with no label
-predicted is NORMAL; non-normal (CHD) vs NORMAL is derived from it (score: the highest label probability). Each label is
-scored against all other pages.
-Classifier: one L2 logistic regression per label on standardized features (balanced class weights, threshold 0.5); folds hold
-out one collection batch at a time, so every score is out of fold. Writes to `out_dir`:
-- `<schema>/scores-<model>.csv`: out-of-fold probability and 0/1 prediction per page and label
-- `<schema>/per_label.csv`: AUROC, AUPRC, F1, sensitivity, specificity, precision, balanced accuracy per model and label
-- `<schema>/summary.csv`: micro and macro F1, macro AUROC and AUPRC, Hamming loss, exact-set accuracy, mean Jaccard per model
-- `<schema>/disagreement.csv`: per model pair, mean Cohen's kappa over labels, share of pages whose predicted label sets differ
-- `summary_all.csv`: every schema's summary rows in one table
+Schema (user, 2026-10-06): hierarchical multi-label, two levels: the ACC-CHD group and the diagnosis under it (variant names
+merged into their parent diagnosis, `merge`). NORMAL is no label: a page with no output above `threshold` is NORMAL; there is no
+separate CHD or NORMAL label. A PJB page with no diagnosis in its file name gets `unknown_label` at both levels.
+Features: each model run's saved per-page outputs (`predictions.csv` label outputs or `embeddings.csv`). Classifier: one L2
+logistic regression per label on standardized features, balanced class weights, fit on the train and val pages of a fold and
+scored on its test pages; folds from `folds` (nested cross-validation manifest of `src.split`), every repeat. Writes to `out_dir`:
+- `scores-<model>-r<repeat>.csv`: out-of-fold probability and 0/1 prediction per page and label
+- `per_label.csv`: per model, repeat and label: AUROC, AUPRC, F1, sensitivity, specificity, precision, balanced accuracy
+- `summary.csv`: per model and repeat, per level and overall: macro AUROC and AUPRC over labels with 10+ pages, micro and macro F1,
+  Hamming loss, exact-set accuracy, mean Jaccard, share of pages whose predicted diagnosis lacks its predicted group
+- `disagreement.csv`: per model pair (repeat 1), mean Cohen's kappa over labels, share of pages whose predicted label sets differ
 - `label_fit.csv`: per model, native outputs and how many name a pediatric ECG finding tied to congenital heart defects
 
 Usage:
@@ -20,6 +20,7 @@ import argparse
 import csv
 import json
 import re
+from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 
@@ -46,46 +47,55 @@ def load_features(run_dir: Path) -> tuple[list[str], list[str], np.ndarray, bool
     return [r["relative_path"] for r in rows], cols, np.array([[float(r[c]) for c in cols] for r in rows]), native
 
 
-def label_matrix(cfg: dict, pages: list[str]) -> dict[str, tuple[list[str], np.ndarray]]:
-    """Every schema of `cfg["schemas"]` as (labels, pages x labels). NORMAL is the empty label set; a CHD page whose diagnoses map
-    to no kept label gets the schema's `fallback` label (or `unknown_label` when its file name carries no diagnosis), so a page has
-    no label exactly when it is NORMAL. Kinds: binary (CHD), first (first-listed diagnosis), group (ACC-CHD group), merged
-    (diagnosis with variant names merged), diagnosis (as written), tree (CHD, groups and diagnoses at once)."""
+def label_matrix(cfg: dict, pages: list[str]) -> tuple[list[str], list[str], np.ndarray, dict[str, str]]:
+    """Labels, their level (group or diagnosis), pages x labels, and the group of each diagnosis label."""
     with (paths.dataset(cfg["dataset"]) / "_labels" / "manifest.csv").open(encoding="utf-8") as fh:
         manifest = {r["relative_path"]: r for r in csv.DictReader(fh)}
     groups = yaml.safe_load((REPO / cfg["groups_config"]).read_text(encoding="utf-8"))["groups"]
-    lists = [[d for d in json.loads(manifest[p][cfg["detailed_column"]] or "[]") if d != "NORMAL"] for p in pages]
-    chd = np.array([manifest[p][cfg["label_column"]] == "PJB" for p in pages])
-    kinds = {"binary": lambda ds: {"CHD"}, "first": lambda ds: set(ds[:1]), "group": lambda ds: {f"group {groups[d]}" for d in ds},
-             "merged": lambda ds: {cfg["merge"].get(d, d) for d in ds}, "diagnosis": lambda ds: set(ds),
-             "tree": lambda ds: {"CHD"} | {f"group {groups[d]}" for d in ds} | set(ds)}
-    schemas = {}
-    for name, spec in cfg["schemas"].items():
-        mapped = [kinds[spec["kind"]](ds) if c else set() for ds, c in zip(lists, chd)]
-        counts = {m: sum(m in s for s in mapped) for m in {m for s in mapped for m in s}}
-        keep = {m for m, n in counts.items() if n >= spec.get("min_pages", 1)}
-        def labelled(s: set, ds: list, c: bool) -> set:
-            if c and not s & keep:
-                return {spec["fallback"] if ds else cfg["unknown_label"]}
-            return (s & keep) | ({spec["fallback"]} if c and s - keep else set())
-        mapped = [labelled(s, ds, c) for s, ds, c in zip(mapped, lists, chd)]
-        labels = sorted({m for s in mapped for m in s}, key=lambda m: (-sum(m in s for s in mapped), m))
-        y = np.column_stack([[m in s for s in mapped] for m in labels])
-        assert (y.any(1) == chd).all(), f"{name}: a page has no label but is CHD, or a label but is NORMAL"
-        schemas[name] = (labels, y)
-    return schemas
+    parent, sets = {}, []
+    for p in pages:
+        ds = [d for d in json.loads(manifest[p][cfg["detailed_column"]] or "[]") if d != "NORMAL"]
+        chd = manifest[p][cfg["label_column"]] == "PJB"
+        if chd and not ds:
+            sets.append({f"group: {cfg['unknown_label']}", f"diagnosis: {cfg['unknown_label']}"})
+            parent[f"diagnosis: {cfg['unknown_label']}"] = f"group: {cfg['unknown_label']}"
+            continue
+        s = set()
+        for d in ds:
+            dx, gr = f"diagnosis: {cfg['merge'].get(d, d)}", f"group: {groups[d]}"
+            s |= {dx, gr}
+            parent[dx] = gr
+        sets.append(s)
+    labels = sorted({m for s in sets for m in s}, key=lambda m: (m.startswith("diagnosis"), -sum(m in s for s in sets), m))
+    y = np.column_stack([[m in s for s in sets] for m in labels])
+    normal = np.array([manifest[p][cfg["label_column"]] == "NORMAL" for p in pages])
+    assert (y.any(1) == ~normal).all(), "a NORMAL page has a label or a PJB page has none"
+    return labels, [m.split(":")[0] for m in labels], y, parent
 
 
-def out_of_fold(x: np.ndarray, y: np.ndarray, batch: np.ndarray, cfg: dict) -> np.ndarray:
-    prob = np.zeros(y.shape)
-    for b in sorted(set(batch)):
-        test = batch == b
+def folds(cfg: dict, pages: list[str]) -> dict[int, list[tuple[np.ndarray, np.ndarray]]]:
+    """Per repeat, per outer fold: (train mask = train and val pages, test mask)."""
+    idx = {p: i for i, p in enumerate(pages)}
+    role = defaultdict(lambda: np.array([""] * len(pages), dtype=object))
+    with paths.resolve(cfg["folds"]).open(encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            if r["relative_path"] in idx:
+                role[(int(r["repeat"]), int(r["fold"]))][idx[r["relative_path"]]] = r["role"]
+    out = defaultdict(list)
+    for (rep, fold), roles in sorted(role.items()):
+        out[rep].append((np.isin(roles, ["train", "val"]), roles == "test"))
+    return out
+
+
+def out_of_fold(x: np.ndarray, y: np.ndarray, splits: list, cfg: dict) -> np.ndarray:
+    prob = np.full(y.shape, np.nan)
+    for train, test in splits:
         for j in range(y.shape[1]):
-            if len(set(y[~test, j])) < 2:
-                prob[test, j] = y[~test, j].mean()
+            if len(set(y[train, j])) < 2:
+                prob[test, j] = y[train, j].mean()
                 continue
             clf = make_pipeline(StandardScaler(), LogisticRegression(C=cfg["C"], class_weight=cfg["class_weight"], max_iter=5000))
-            prob[test, j] = clf.fit(x[~test], y[~test, j]).predict_proba(x[test])[:, 1]
+            prob[test, j] = clf.fit(x[train], y[train, j]).predict_proba(x[test])[:, 1]
     return prob
 
 
@@ -95,6 +105,14 @@ def per_label(y: np.ndarray, prob: np.ndarray, pred: np.ndarray, j: int) -> dict
     sens, spec = tp / max(tp + fn, 1), tn / max(tn + fp, 1)
     return {"support": int(t.sum()), "auroc": roc_auc_score(t, s), "auprc": average_precision_score(t, s), "prevalence": t.mean(),
             "f1": f1_score(t, p, zero_division=0), "sensitivity": sens, "specificity": spec, "precision": tp / max(tp + fp, 1), "balanced_accuracy": (sens + spec) / 2}
+
+
+def set_metrics(y: np.ndarray, pred: np.ndarray, rows: list[dict], min_pages: int) -> dict:
+    big = [r for r in rows if r["support"] >= min_pages]  # a label with fewer pages often has none in a training fold, which then scores it with a constant
+    return {"labels": len(rows), "labels_10plus": len(big), "macro_auroc_10plus": float(np.mean([r["auroc"] for r in big])),
+            "macro_auprc_10plus": float(np.mean([r["auprc"] for r in big])), "micro_f1": f1_score(y, pred, average="micro", zero_division=0),
+            "macro_f1": f1_score(y, pred, average="macro", zero_division=0), "hamming_loss": hamming_loss(y, pred), "exact_set_accuracy": float((pred == y).all(1).mean()),
+            "mean_jaccard": float(np.mean([(t & q).sum() / (t | q).sum() if (t | q).any() else 1.0 for t, q in zip(y, pred)]))}  # empty true and predicted sets (NORMAL kept NORMAL) score 1
 
 
 def write(path: Path, rows: list[dict]) -> None:
@@ -121,42 +139,38 @@ def main() -> None:
     write(out / "label_fit.csv", fit)
     pages = feats[next(iter(feats))][0]
     assert all(f[0] == pages for f in feats.values()), "runs cover different pages"
-    batch = np.array([cfg["batches"][p.split("/")[0]] for p in pages])
-    everything = []
-    for schema, (labels, y) in label_matrix(cfg, pages).items():
-        preds, rows, summary = {}, [], []
-        for model, (_, x) in tqdm(feats.items(), desc=schema):
-            prob = out_of_fold(x, y, batch, cfg)
+    labels, level, y, parent = label_matrix(cfg, pages)
+    level = np.array(level)
+    child = [j for j, l in enumerate(labels) if l in parent]
+    splits = folds(cfg, pages)
+    print(f"{len(pages)} pages; {len(labels)} labels ({(level == 'group').sum()} groups, {(level == 'diagnosis').sum()} diagnoses); repeats {sorted(splits)}")
+    rows, summary, preds = [], [], {}
+    for model, (_, x) in tqdm(feats.items(), desc="models"):
+        for rep, sp in splits.items():
+            prob = out_of_fold(x, y, sp, cfg)
             pred = prob >= cfg["threshold"]
-            preds[model] = pred
-            write(out / schema / f"scores-{model}.csv", [{"relative_path": p, **{f"{l} prob": float(prob[i, j]) for j, l in enumerate(labels)},
-                                                         **{f"{l} pred": int(pred[i, j]) for j, l in enumerate(labels)}} for i, p in enumerate(pages)])
-            label_rows = [{"model": model, "label": l, **per_label(y, prob, pred, j)} for j, l in enumerate(labels)]
+            if rep == 1:
+                preds[model] = pred
+            write(out / f"scores-{model}-r{rep}.csv", [{"relative_path": p, **{f"{l} prob": float(prob[i, j]) for j, l in enumerate(labels)},
+                                                       **{f"{l} pred": int(pred[i, j]) for j, l in enumerate(labels)}} for i, p in enumerate(pages)])
+            label_rows = [{"model": model, "repeat": rep, "label": l, "level": level[j], **per_label(y, prob, pred, j)} for j, l in enumerate(labels)]
             rows += label_rows
-            chd, chd_score, chd_pred = y.any(1), prob.max(1), pred.any(1)
-            summary.append({"model": model, "labels": len(labels), "labels_under_10_pages": int((y.sum(0) < 10).sum()), "chd_auroc": roc_auc_score(chd, chd_score), "chd_f1": f1_score(chd, chd_pred),
-                            "chd_sensitivity": float(chd_pred[chd].mean()), "normal_specificity": float((~chd_pred[~chd]).mean()), "macro_auroc": float(np.mean([r["auroc"] for r in label_rows])),
-                            "macro_auroc_10plus": float(np.mean([r["auroc"] for r in label_rows if r["support"] >= 10])),  # a label with few pages often has none in a training fold, which then scores it with a constant
-                            "macro_auprc": float(np.mean([r["auprc"] for r in label_rows])), "micro_f1": f1_score(y, pred, average="micro", zero_division=0),
-                            "macro_f1": f1_score(y, pred, average="macro", zero_division=0), "hamming_loss": hamming_loss(y, pred),
-                            "exact_set_accuracy": float((pred == y).all(1).mean()),
-                            "mean_jaccard": float(np.mean([(t & q).sum() / (t | q).sum() if (t | q).any() else 1.0 for t, q in zip(y, pred)]))})  # NORMAL predicted NORMAL (both sets empty) scores 1
-        write(out / schema / "per_label.csv", rows)
-        write(out / schema / "summary.csv", summary)
-        everything += [{"schema": schema, **r} for r in summary]
-        dis = []
-        for a, b in combinations(preds, 2):
-            kappas = [cohen_kappa_score(preds[a][:, j], preds[b][:, j]) for j in range(len(labels))]
-            dis.append({"model_a": a, "model_b": b, "mean_kappa": float(np.nanmean(kappas)), "pages_with_different_label_sets": float((preds[a] != preds[b]).any(1).mean()),
-                        "label_disagreement_rate": float((preds[a] != preds[b]).mean())})
-        allp = np.stack(list(preds.values()))
-        dis.append({"model_a": "all", "model_b": "all", "mean_kappa": float("nan"), "pages_with_different_label_sets": float((allp != allp[0]).any((0, 2)).mean()),
-                    "label_disagreement_rate": float((allp != allp[0]).any(0).mean())})
-        write(out / schema / "disagreement.csv", dis)
-    write(out / "summary_all.csv", everything)
-    print("| Schema | Labels | Model | Macro AUROC, labels with 10+ pages | Macro F1 | Micro F1 | Hamming loss | Exact-set accuracy | CHD AUROC | CHD sensitivity | NORMAL specificity |\n|---|---|---|---|---|---|---|---|---|---|---|")
-    for s in everything:
-        print(f"| {s['schema']} | {s['labels']} | {s['model']} | {s['macro_auroc_10plus']:.4f} | {s['macro_f1']:.4f} | {s['micro_f1']:.4f} | {s['hamming_loss']:.4f} | {s['exact_set_accuracy']:.4f} | {s['chd_auroc']:.4f} | {s['chd_sensitivity']:.4f} | {s['normal_specificity']:.4f} |")
+            orphan = float(np.mean([any(pred[i, j] and not pred[i, labels.index(parent[labels[j]])] for j in child) for i in range(len(pages))]))
+            for name, cols in (("overall", np.arange(len(labels))), ("group", np.flatnonzero(level == "group")), ("diagnosis", np.flatnonzero(level == "diagnosis"))):
+                summary.append({"model": model, "repeat": rep, "level": name, **set_metrics(y[:, cols], pred[:, cols], [label_rows[c] for c in cols], cfg["min_pages"]),
+                                "pages_with_diagnosis_without_its_group": orphan})
+    write(out / "per_label.csv", rows)
+    write(out / "summary.csv", summary)
+    dis = [{"model_a": a, "model_b": b, "mean_kappa": float(np.nanmean([cohen_kappa_score(preds[a][:, j], preds[b][:, j]) for j in range(len(labels))])),
+            "pages_with_different_label_sets": float((preds[a] != preds[b]).any(1).mean()), "label_disagreement_rate": float((preds[a] != preds[b]).mean())}
+           for a, b in combinations(preds, 2)]
+    write(out / "disagreement.csv", dis)
+    keys = ["macro_auroc_10plus", "macro_auprc_10plus", "micro_f1", "macro_f1", "hamming_loss", "exact_set_accuracy", "mean_jaccard"]
+    print("| Model | Level | " + " | ".join(keys) + " |\n|" + "---|" * (len(keys) + 2))
+    for model in feats:
+        for name in ("overall", "group", "diagnosis"):
+            r = [s for s in summary if s["model"] == model and s["level"] == name]
+            print(f"| {model} | {name} | " + " | ".join(f"{np.mean([s[k] for s in r]):.4f} ± {np.std([s[k] for s in r]):.4f}" for k in keys) + " |")
 
 
 if __name__ == "__main__":
