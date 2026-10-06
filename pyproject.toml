@@ -27,6 +27,7 @@ dependencies = [
     "tqdm",
     "transformers>=5.18.0",
     "ultralytics>=8.4.123",
+    "umap-learn>=0.5.12",
     "wfdb>=4.3.1",
 ]
 
