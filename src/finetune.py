@@ -8,12 +8,13 @@ test pages scored once. Per model (one more unit): a network trained on every la
 its folds, with the median thresholds, scores the unlabeled sets in `predict` and is kept.
 
 Writes to `out_dir/<model>/`: `inputs-<dataset>.npz` (prepared inputs), `parts/r<repeat>_f<fold>.csv` and `_settings.json`,
-`oof_r<repeat>.csv`, `<dataset>_predictions.csv`, `final.pt`; to `report_dir`: `per_label.csv`, `summary.csv` (F1 by level).
-Long runs: one progress line with ETA over units, a log in `log_dir`; a unit saves a checkpoint after every epoch and resumes from
-it, and finished units are skipped.
+`oof_r<repeat>.csv`, `<dataset>_predictions.csv`, `final.pt`; to `report_dir`: `per_label.csv`, `summary.csv` (F1 by level),
+`normal_vs_pjb.csv` (NORMAL = no label predicted). Every epoch's losses, thresholds and val metrics go to
+`parts/r<repeat>_f<fold>_checkpoint_epochs.csv`. Long runs: one progress line with ETA over units, a log in `log_dir`; a unit
+saves a checkpoint after every epoch and resumes from it, and finished units are skipped.
 
 Usage:
-    uv run python -m src.finetune --config configs/finetune.yml
+    uv run python -m src.finetune --config configs/finetune.yml [--models ecgfounder]
 """
 import argparse
 import csv
@@ -31,7 +32,7 @@ from torch.utils.data import DataLoader
 
 from src import paths
 from src.infer import Pages
-from src.linear_probe import label_matrix, load_folds, metrics, write_csv
+from src.linear_probe import label_matrix, load_folds, metrics, normal_vs_pjb, write_csv, write_report
 from src.models import MODELS
 from src.progress import Progress, clock
 from src.thresholds import choose, parents, predict
@@ -185,7 +186,11 @@ def _micro(y: np.ndarray, pred: np.ndarray) -> float:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", type=Path, required=True)
-    cfg = yaml.safe_load(ap.parse_args().config.read_text(encoding="utf-8"))
+    ap.add_argument("--models", nargs="+", help="run only these models of the config (default: every model)")
+    args = ap.parse_args()
+    cfg = yaml.safe_load(args.config.read_text(encoding="utf-8"))
+    if args.models:
+        cfg["models"] = {m: cfg["models"][m] for m in args.models}
     out_root, report, log_dir = paths.resolve(cfg["out_dir"]), paths.resolve(cfg["report_dir"]), paths.resolve(cfg["log_dir"])
     for d in (out_root, report, log_dir):
         d.mkdir(parents=True, exist_ok=True)
@@ -239,7 +244,7 @@ def main() -> None:
         print("\r" + " " * 110, end="\r")
         bar.step(1, note)
     bar.close()
-    per_label, summary = [], []
+    per_label, summary, binary = [], [], []
     idx = {p: i for i, p in enumerate(pages)}
     for model in cfg["models"]:
         for rep in sorted({r for r, _ in folds}):
@@ -257,15 +262,8 @@ def main() -> None:
             rows, levels = metrics(y, pred, labels)
             per_label += [{"model": model, "repeat": rep, **r} for r in rows]
             summary += [{"model": model, "repeat": rep, "level": name, **v} for name, v in levels.items()]
-    fmt = lambda v: f"{v:.4f}" if isinstance(v, float) else v
-    write_csv(report / "per_label.csv", list(per_label[0]), [[fmt(v) for v in r.values()] for r in per_label])
-    write_csv(report / "summary.csv", list(summary[0]), [[fmt(v) for v in r.values()] for r in summary])
-    print("| Model | Level | Micro F1 | Macro F1 | Exact-set accuracy |\n|---|---|---|---|---|")
-    for model in cfg["models"]:
-        for name in ("overall", "group", "diagnosis"):
-            r = [s for s in summary if s["model"] == model and s["level"] == name]
-            ms = lambda k: f"{np.mean([s[k] for s in r]):.4f} (sd {np.std([s[k] for s in r]):.4f})"
-            print(f"| {model} | {name} | {ms('micro_f1')} | {ms('macro_f1')} | {ms('exact_set_accuracy')} |")
+            binary.append({"model": model, "repeat": rep, **normal_vs_pjb(y, pred)})
+    write_report(report, per_label, summary, binary, list(cfg["models"]))
     log.info("report written to %s", report)
 
 

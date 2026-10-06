@@ -20,8 +20,8 @@ models:                             # name: the src.infer config whose adapter, 
   ecg_fm: {config: configs/infer/ecg_fm_emb.yml, batch_size: 16, frozen: [proj.]}             # its 17-label output layer is not used
 lr: {backbone: 1.0e-5, head: 1.0e-4}   # differential learning rate for a pretrained backbone (coding.md default)
 weight_decay: 0.01                  # AdamW default in PyTorch, not tuned
-max_epochs: 30
-patience: 5                         # epochs without a better validation micro F1 before stopping
+max_epochs: 60                      # 30 capped ECGFounder on 5 of 15 folds
+patience: 8                         # epochs without a better validation micro F1 before stopping; the single ECGFounder run (finetune_single) peaked at epoch 10 and stopped at 18
 pos_weight_max: 50                  # cap of the per-label positive weight (negatives / positives on train) in the BCE loss
 augment: {amplitude: 0.1, noise: 0.02, shift: 0.1}   # per training sample: lead amplitude scaled by 1 +- 0.1, Gaussian noise at 0.02 of the signal SD, circular time shift up to 10 percent
 workers: 4                          # data-loader processes for the one-time input preparation

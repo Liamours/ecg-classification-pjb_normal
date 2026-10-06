@@ -3,14 +3,15 @@
 Labels (user, 2026-10-06): ACC-CHD group and diagnosis (variant names merged), NORMAL = no label above its threshold.
 Per model, repeat and outer fold (one resumable unit): standardize on the train pages; per label fit an L2 logistic regression
 on train for every value of `C_grid` (warm-started from the previous one), keep the value with the best average precision on
-val, set the label's threshold to the value that maximizes F1 on val, then score the test pages once with that train-only fit.
-Per model (one more unit): a probe on every labeled page, with each label's most often chosen C and median threshold, scores the
-unlabeled sets in `predict`.
+val; one threshold per level chosen on val by micro F1, a diagnosis kept only when its group is predicted (`src.thresholds`);
+then score the test pages once with the train-only fit. Per model (one more unit): a probe on every labeled page, with each
+label's most often chosen C and the median thresholds per level, scores the unlabeled sets in `predict`.
 
 Writes to `out_dir/<model>/`: `parts/r<repeat>_f<fold>.csv` (test-page probabilities and 0/1 predictions) and
-`parts/r<repeat>_f<fold>_settings.csv` (chosen C and threshold per label), `oof_r<repeat>.csv` (every labeled page's
-out-of-fold predictions), `<dataset>_predictions.csv` per unlabeled set; to `report_dir`: `per_label.csv` and `summary.csv`
-(per model and repeat, F1 by level: micro and macro F1, precision, sensitivity, exact-set accuracy, Hamming loss).
+`parts/r<repeat>_f<fold>_settings.json` (thresholds per level, C per label), `oof_r<repeat>.csv` (every labeled page's
+out-of-fold predictions), `<dataset>_predictions.csv` per unlabeled set; to `report_dir`: `per_label.csv`, `summary.csv`
+(per model and repeat, F1 by level: micro and macro F1, precision, sensitivity, exact-set accuracy, Hamming loss) and
+`normal_vs_pjb.csv` (NORMAL = no label predicted: F1, precision, sensitivity per class, macro F1, counts).
 One progress line with ETA, a log in `log_dir`; finished units are skipped on a rerun.
 
 Usage:
@@ -31,11 +32,12 @@ import yaml
 from joblib import Parallel, delayed
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import average_precision_score, f1_score, hamming_loss, precision_recall_curve
+from sklearn.metrics import average_precision_score, f1_score, hamming_loss
 from sklearn.preprocessing import StandardScaler
 
 from src import paths
 from src.progress import Progress
+from src.thresholds import choose, parents, predict
 
 REPO = Path(__file__).resolve().parents[1]
 META = {"page", "relative_path", "label", "leads_ok"}
@@ -75,10 +77,10 @@ def load_folds(cfg: dict, pages: list[str]) -> dict[tuple[int, int], np.ndarray]
     return dict(sorted(roles.items()))
 
 
-def fit_label(xtr, ytr, xva, yva, cfg: dict) -> tuple[float, float, LogisticRegression | None]:
-    """Best C on val by average precision, then the F1-maximizing threshold on val; (C, threshold, train-only model)."""
+def fit_label(xtr, ytr, xva, yva, cfg: dict) -> tuple[float, LogisticRegression | None]:
+    """Best C on val by average precision; (C, train-only model)."""
     if ytr.sum() == 0 or ytr.all():
-        return float("nan"), 0.5, None
+        return float("nan"), None
     warnings.simplefilter("ignore", ConvergenceWarning)
     clf = LogisticRegression(class_weight=cfg["class_weight"], max_iter=cfg["max_iter"], warm_start=True)
     best = (-1.0, None, None)
@@ -94,36 +96,31 @@ def fit_label(xtr, ytr, xva, yva, cfg: dict) -> tuple[float, float, LogisticRegr
         clf.coef_, clf.intercept_ = best[2]
     else:
         clf.fit(xtr, ytr)
-    threshold = 0.5
-    if yva.any():
-        prec, rec, thr = precision_recall_curve(yva, clf.predict_proba(xva)[:, 1])
-        f1 = 2 * prec[:-1] * rec[:-1] / np.maximum(prec[:-1] + rec[:-1], 1e-12)
-        threshold = float(thr[np.argmax(f1)])
-    return c, threshold, clf
+    return c, clf
 
 
-def run_fold(x, y, role, cfg) -> tuple[np.ndarray, list[tuple[float, float]]]:
+def run_fold(x, y, role, parent, cfg) -> tuple[np.ndarray, list[float], dict]:
+    """Per label C on val; thresholds per level on val (`src.thresholds`); (test probabilities, C per label, thresholds)."""
     tr, va, te = role == "train", role == "val", role == "test"
     scaler = StandardScaler().fit(x[tr])
     xtr, xva, xte = scaler.transform(x[tr]), scaler.transform(x[va]), scaler.transform(x[te])
     fits = Parallel(n_jobs=cfg["jobs"])(delayed(fit_label)(xtr, y[tr, j], xva, y[va, j], cfg) for j in range(y.shape[1]))
-    prob = np.column_stack([f[2].predict_proba(xte)[:, 1] if f[2] is not None else np.zeros(te.sum()) for f in fits])
-    return prob, [(f[0], f[1]) for f in fits]
+    score = lambda xs: np.column_stack([f[1].predict_proba(xs)[:, 1] if f[1] is not None else np.zeros(len(xs)) for f in fits])
+    return score(xte), [f[0] for f in fits], choose(score(xva), y[va], parent)
 
 
-def final_probe(x, y, settings: list[list[tuple[float, float]]], cfg) -> tuple[StandardScaler, list, np.ndarray]:
-    """One probe on every labeled page per label: the most often chosen C, the median threshold over all folds."""
+def final_probe(x, y, cs: list[list[float]], cfg) -> tuple[StandardScaler, list]:
+    """One probe on every labeled page per label, with the most often chosen C over all folds."""
     scaler = StandardScaler().fit(x)
     xs = scaler.transform(x)
-    models, thresholds = [], []
+    models = []
     for j in range(y.shape[1]):
-        cs = [s[j][0] for s in settings if not np.isnan(s[j][0])]
-        thresholds.append(float(np.median([s[j][1] for s in settings])))
-        if not cs or y[:, j].sum() == 0:
+        chosen = [c[j] for c in cs if not np.isnan(c[j])]
+        if not chosen or y[:, j].sum() == 0:
             models.append(None)
             continue
-        models.append(LogisticRegression(C=Counter(cs).most_common(1)[0][0], class_weight=cfg["class_weight"], max_iter=cfg["max_iter"]).fit(xs, y[:, j]))
-    return scaler, models, np.array(thresholds)
+        models.append(LogisticRegression(C=Counter(chosen).most_common(1)[0][0], class_weight=cfg["class_weight"], max_iter=cfg["max_iter"]).fit(xs, y[:, j]))
+    return scaler, models
 
 
 def write_csv(path: Path, header: list[str], rows) -> None:
@@ -159,6 +156,18 @@ def metrics(y: np.ndarray, pred: np.ndarray, labels: list[str]) -> tuple[list[di
     return rows, out
 
 
+def normal_vs_pjb(y: np.ndarray, pred: np.ndarray) -> dict:
+    """NORMAL vs PJB read from the multi-label output: a page is PJB when it has any label (truth) or any predicted label."""
+    t, p = y.any(1), pred.any(1)
+    out = {"normal_pages": int((~t).sum()), "pjb_pages": int(t.sum()), "normal_as_normal": int((~t & ~p).sum()), "normal_as_pjb": int((~t & p).sum()),
+           "pjb_as_normal": int((t & ~p).sum()), "pjb_as_pjb": int((t & p).sum())}
+    for name, tc, pc in (("normal", ~t, ~p), ("pjb", t, p)):
+        tp, fp, fn = (tc & pc).sum(), (~tc & pc).sum(), (tc & ~pc).sum()
+        out |= {f"{name}_f1": float(2 * tp / max(2 * tp + fp + fn, 1)), f"{name}_precision": float(tp / max(tp + fp, 1)), f"{name}_sensitivity": float(tp / max(tp + fn, 1))}
+    out["macro_f1"] = (out["normal_f1"] + out["pjb_f1"]) / 2
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", type=Path, required=True)
@@ -179,6 +188,7 @@ def main() -> None:
             print(f"skip {model}: no embeddings at {path}")
     pages = next(iter(data.values()))[0]
     labels, y = label_matrix(cfg, pages)
+    parent = parents(labels, REPO / cfg["groups_config"], cfg["merge"], cfg["unknown_label"])
     folds = load_folds(cfg, pages)
     units = [(m, r, f) for m in data for (r, f) in folds] + [(m, 0, 0) for m in data]
     todo = [u for u in units if not (out_root / u[0] / "parts" / (f"r{u[1]}_f{u[2]}.csv" if u[1] else "final.done")).exists()]
@@ -191,18 +201,16 @@ def main() -> None:
         part.mkdir(parents=True, exist_ok=True)
         if rep:
             role = folds[(rep, fold)]
-            prob, settings = run_fold(x, y, role, cfg)
-            pred = prob >= np.array([s[1] for s in settings])
+            prob, cs, t = run_fold(x, y, role, parent, cfg)
+            pred = predict(prob, t, parent)
             test = np.flatnonzero(role == "test")
-            write_csv(part / f"r{rep}_f{fold}_settings.csv", ["label", "C", "threshold"], [[l, s[0], f"{s[1]:.6f}"] for l, s in zip(labels, settings)])
+            (part / f"r{rep}_f{fold}_settings.json").write_text(json.dumps({"thresholds": t, "C": dict(zip(labels, cs))}), encoding="utf-8")
             write_csv(part / f"r{rep}_f{fold}.csv", ["relative_path"] + [f"{l} prob" for l in labels] + [f"{l} pred" for l in labels],
                       [[pages[i]] + [f"{v:.5f}" for v in prob[k]] + [int(v) for v in pred[k]] for k, i in enumerate(test)])
         else:
-            settings = []
-            for (r, f) in folds:
-                with (part / f"r{r}_f{f}_settings.csv").open(encoding="utf-8") as fh:
-                    settings.append([(float(s["C"]) if s["C"] != "nan" else float("nan"), float(s["threshold"])) for s in csv.DictReader(fh)])
-            scaler, models, thresholds = final_probe(x, y, settings, cfg)
+            settings = [json.loads((part / f"r{r}_f{f}_settings.json").read_text(encoding="utf-8")) for (r, f) in folds]
+            t = {k: float(np.median([s["thresholds"][k] for s in settings])) for k in ("group", "diagnosis")}
+            scaler, models = final_probe(x, y, [[s["C"][l] for l in labels] for s in settings], cfg)
             for ds in cfg["predict"]:
                 path = paths.resolve("@inferences") / cfg["models"][model] / ds / "embeddings.csv"
                 if not path.exists():
@@ -210,12 +218,13 @@ def main() -> None:
                 pgs, xs = load_embeddings(path)
                 xs = scaler.transform(xs)
                 prob = np.column_stack([m.predict_proba(xs)[:, 1] if m is not None else np.zeros(len(pgs)) for m in models])
+                pred = predict(prob, t, parent)
                 write_csv(out_root / model / f"{ds}_predictions.csv", ["relative_path"] + [f"{l} prob" for l in labels] + [f"{l} pred" for l in labels],
-                          [[p] + [f"{v:.5f}" for v in prob[i]] + [int(v) for v in prob[i] >= thresholds] for i, p in enumerate(pgs)])
-            write_csv(part / "final.done", ["label", "threshold"], [[l, f"{t:.6f}"] for l, t in zip(labels, thresholds)])
+                          [[p] + [f"{v:.5f}" for v in prob[i]] + [int(v) for v in pred[i]] for i, p in enumerate(pgs)])
+            write_csv(part / "final.done", ["level", "threshold"], [[k, f"{v:.2f}"] for k, v in t.items()])
         bar.step(1, f"{model} r{rep} f{fold}" if rep else f"{model} final")
     bar.close()
-    per_label, summary = [], []
+    per_label, summary, binary = [], [], []
     for model in data:
         for rep in sorted({r for r, _ in folds}):
             prob, pred = np.zeros(y.shape), np.zeros(y.shape, bool)
@@ -230,16 +239,26 @@ def main() -> None:
             rows, levels = metrics(y, pred, labels)
             per_label += [{"model": model, "repeat": rep, **r} for r in rows]
             summary += [{"model": model, "repeat": rep, "level": name, **v} for name, v in levels.items()]
+            binary.append({"model": model, "repeat": rep, **normal_vs_pjb(y, pred)})
+    write_report(report, per_label, summary, binary, list(data))
+    log.info("report written to %s", report)
+
+
+def write_report(report: Path, per_label: list[dict], summary: list[dict], binary: list[dict], models: list[str]) -> None:
+    """Per-label, per-level and NORMAL vs PJB tables (one row per model and repeat); prints the means and SDs over repeats."""
     fmt = lambda v: f"{v:.4f}" if isinstance(v, float) else v
-    write_csv(report / "per_label.csv", list(per_label[0]), [[fmt(v) for v in r.values()] for r in per_label])
-    write_csv(report / "summary.csv", list(summary[0]), [[fmt(v) for v in r.values()] for r in summary])
+    for name, rows in (("per_label", per_label), ("summary", summary), ("normal_vs_pjb", binary)):
+        write_csv(report / f"{name}.csv", list(rows[0]), [[fmt(v) for v in r.values()] for r in rows])
+    ms = lambda rows, k: f"{np.mean([r[k] for r in rows]):.4f} (sd {np.std([r[k] for r in rows]):.4f})"
     print("| Model | Level | Micro F1 | Macro F1 | Exact-set accuracy |\n|---|---|---|---|---|")
-    for model in data:
+    for model in models:
         for name in ("overall", "group", "diagnosis"):
             r = [s for s in summary if s["model"] == model and s["level"] == name]
-            ms = lambda k: f"{np.mean([s[k] for s in r]):.4f} (sd {np.std([s[k] for s in r]):.4f})"
-            print(f"| {model} | {name} | {ms('micro_f1')} | {ms('macro_f1')} | {ms('exact_set_accuracy')} |")
-    log.info("report written to %s", report)
+            print(f"| {model} | {name} | {ms(r, 'micro_f1')} | {ms(r, 'macro_f1')} | {ms(r, 'exact_set_accuracy')} |")
+    print("\n| Model | NORMAL F1 | PJB F1 | Macro F1 | NORMAL sensitivity | PJB sensitivity |\n|---|---|---|---|---|---|")
+    for model in models:
+        r = [b for b in binary if b["model"] == model]
+        print(f"| {model} | {ms(r, 'normal_f1')} | {ms(r, 'pjb_f1')} | {ms(r, 'macro_f1')} | {ms(r, 'normal_sensitivity')} | {ms(r, 'pjb_sensitivity')} |")
 
 
 if __name__ == "__main__":

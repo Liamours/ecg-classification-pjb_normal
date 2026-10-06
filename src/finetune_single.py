@@ -2,7 +2,8 @@
 
 Uses the training code of `src.finetune` on the split `split` (repeat and fold of `manifest_folds.csv`): train pages train, val
 pages stop training and set the per-level thresholds, test pages are scored once. Keeps the best-epoch model (`model.pt`: weights,
-labels, thresholds, epoch, config) and writes the test predictions, the per-label and summary F1 tables and the scan predictions.
+labels, thresholds, epoch, config) and writes the test predictions, the per-label and summary F1 tables, the NORMAL vs PJB table
+(NORMAL = no label predicted) and the scan predictions. A rerun of a finished run only rescores and rewrites these outputs.
 One progress line with ETA over the epoch limit (early stopping may end sooner) and a log in `log_dir`; a stopped run continues from
 its last epoch. Every epoch's details go to `checkpoint_epochs.csv` (train and val loss, thresholds, val F1, precision,
 sensitivity, exact-set accuracy and Hamming loss per level, best epoch, time); weights are kept only for the best epoch by val micro F1
@@ -23,7 +24,7 @@ import yaml
 
 from src import paths
 from src.finetune import prepare, scores, train
-from src.linear_probe import label_matrix, load_folds, metrics, write_csv
+from src.linear_probe import label_matrix, load_folds, metrics, normal_vs_pjb, write_csv
 from src.progress import Progress
 from src.thresholds import parents, predict
 
@@ -57,9 +58,11 @@ def main() -> None:
     prob = scores(net, x[te], spec["batch_size"], device)
     pred = predict(prob, t, parent)
     rows, levels = metrics(y[te], pred, labels)
+    binary = normal_vs_pjb(y[te], pred)
     fmt = lambda v: f"{v:.4f}" if isinstance(v, float) else v
     write_csv(report / "per_label.csv", list(rows[0]), [[fmt(v) for v in r.values()] for r in rows])
     write_csv(report / "summary.csv", ["level"] + list(levels["overall"]), [[k] + [fmt(v) for v in d.values()] for k, d in levels.items()])
+    write_csv(report / "normal_vs_pjb.csv", list(binary), [[fmt(v) for v in binary.values()]])
     head = ["relative_path"] + [f"{l} prob" for l in labels] + [f"{l} pred" for l in labels]
     write_csv(out / "test_predictions.csv", head, [[pages[i]] + [f"{v:.5f}" for v in prob[k]] + [int(v) for v in pred[k]] for k, i in enumerate(te)])
     torch.save({"model": net.state_dict(), "labels": labels, "thresholds": t, "best_epoch": best_epoch, "config": cfg}, out / "model.pt")
@@ -67,11 +70,15 @@ def main() -> None:
         rels, xs = prepare(spec, paths.resolve(run), out / f"inputs-{ds}.npz", cfg["workers"], log)
         p = scores(net, xs, spec["batch_size"], device)
         write_csv(out / f"{ds}_predictions.csv", head, [[r] + [f"{v:.5f}" for v in p[i]] + [int(v) for v in predict(p, t, parent)[i]] for i, r in enumerate(rels)])
-    (report / "run.json").write_text(json.dumps({"best_epoch": best_epoch, "thresholds": t, "test_pages": int(len(te)), "levels": levels}, indent=1, default=float), encoding="utf-8")
-    log.info("done: best epoch %d, thresholds %s, test micro F1 %.4f", best_epoch, t, levels["overall"]["micro_f1"])
+    (report / "run.json").write_text(json.dumps({"best_epoch": best_epoch, "thresholds": t, "test_pages": int(len(te)), "levels": levels, "normal_vs_pjb": binary}, indent=1, default=float), encoding="utf-8")
+    log.info("done: best epoch %d, thresholds %s, test micro F1 %.4f, NORMAL vs PJB macro F1 %.4f", best_epoch, t, levels["overall"]["micro_f1"], binary["macro_f1"])
     print("| Level | Micro F1 | Macro F1 | Precision | Sensitivity | Exact-set accuracy |\n|---|---|---|---|---|---|")
     for k, d in levels.items():
         print(f"| {k} | {d['micro_f1']:.4f} | {d['macro_f1']:.4f} | {d['micro_precision']:.4f} | {d['micro_sensitivity']:.4f} | {d['exact_set_accuracy']:.4f} |")
+    print("\n| Class | Pages | F1 | Precision | Sensitivity |\n|---|---|---|---|---|")
+    for k in ("normal", "pjb"):
+        print(f"| {k.upper()} | {binary[f'{k}_pages']} | {binary[f'{k}_f1']:.4f} | {binary[f'{k}_precision']:.4f} | {binary[f'{k}_sensitivity']:.4f} |")
+    print(f"| macro | - | {binary['macro_f1']:.4f} | - | - |")
 
 
 if __name__ == "__main__":
