@@ -1,0 +1,7 @@
+dataset: mac400-phone_photo
+run: '@inferences/canonical_mac400-phone_photo'   # digitized records (record.csv, record.json) of the dataset
+text_dir: _text                                   # docling JSON per page, under the dataset folder
+signal_fs: 50          # leads downsampled to this rate before comparing, so small time offsets between two photos matter less
+min_leads: 6           # a pair is compared on the leads both pages have; fewer shared leads than this gives no score
+hash_size: 8           # difference hash of the page image: hash_size x hash_size bits, smallest distance over the four rotations
+out_dir: '@analyses/duplicates'
