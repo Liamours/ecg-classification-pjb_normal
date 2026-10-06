@@ -10,3 +10,9 @@ mkdir -p "$hub"
 for f in config.json model.safetensors; do
   [ -f "$hub/$f" ] || curl -L --fail --progress-bar -o "$hub/$f" "https://huggingface.co/Edoardo-Coppola/HuBERT-ECG-SFT-CardioLearning-base/resolve/main/$f"
 done
+# ECG-FM fine-tuned on MIMIC-IV-ECG, 17 outputs (MIT, Hugging Face wanglab/ecg-fm)
+fm="$(dirname "$0")/../../../models/ecg_fm-mimic_iv_ecg_finetuned-pretrained"
+mkdir -p "$fm"
+for f in mimic_iv_ecg_finetuned.pt mimic_iv_ecg_finetuned.yaml; do
+  [ -f "$fm/$f" ] || curl -L --fail --progress-bar -o "$fm/$f" "https://huggingface.co/wanglab/ecg-fm/resolve/main/$f"
+done

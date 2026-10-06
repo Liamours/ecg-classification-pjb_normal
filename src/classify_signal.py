@@ -5,6 +5,8 @@ Each model's preprocessing repeats its upstream code:
 - `ecgfounder` (ECGFounder ptbxl_eval.py): leads I to V6 at 500 Hz, missing values 0, one z-score over the whole array, 10 s input.
 - `hubert_ecg` (HuBERT-ECG utils.ecg_preprocessing and dataset.py): FIR band-pass 0.05 to 47 Hz, each lead min-max scaled to
   [-1, 1], first 5 s at 500 Hz, missing values set to the mean, the 12 leads flattened and decimated by 5 to 100 Hz.
+- `ecg_fm` (ECG-FM infer_quickstart.ipynb with ecg-transform 0.1.3): leads I to V6 at 500 Hz, each lead z-scored, a constant
+  or missing lead set to 0, one 5 s window.
 `fill` sets how a lead shorter than the input reaches its length: `zero` leaves it missing (filled as above), `tile` repeats
 the lead's digitized stretch. Writes <out_dir>/<dataset>/predictions.csv: page, relative_path, label, leads_ok, then one
 sigmoid output per model label. Resumable per page. For labeled pages the summary ranks outputs by AUROC between PJB and NORMAL.
@@ -87,7 +89,30 @@ class HuBERTECG:
         return self.model(batch, attention_mask=None).logits
 
 
-MODELS = {"ecgfounder": ECGFounder, "hubert_ecg": HuBERTECG}
+class ECGFM:
+    def __init__(self, cfg: dict):
+        sys.path.insert(0, str(REPO / "third_party"))
+        from fairseq_signals.models import build_model_from_checkpoint
+        with (REPO / "third_party/ecg_fm/label_def.csv").open(encoding="utf-8") as fh:
+            self.labels = [r["name"] for r in csv.DictReader(fh)]
+        self.model = build_model_from_checkpoint(checkpoint_path=str(paths.resolve(cfg["weights"])))
+
+    def prepare(self, x: np.ndarray, fill: str) -> np.ndarray:
+        out = np.zeros((12, 5 * FS))
+        for i, lead in enumerate(x):
+            ok = ~np.isnan(lead)
+            if ok.sum() < 2 or np.ptp(lead[ok]) == 0:
+                continue
+            z = lead.copy()
+            z[ok] = (lead[ok] - lead[ok].mean()) / (lead[ok].std() + 1e-8)
+            out[i] = np.nan_to_num(fit_length(z[None], 5 * FS, fill)[0], nan=0.0)
+        return out.astype(np.float32)
+
+    def __call__(self, batch: torch.Tensor) -> torch.Tensor:
+        return self.model(source=batch)["out"]
+
+
+MODELS = {"ecgfounder": ECGFounder, "hubert_ecg": HuBERTECG, "ecg_fm": ECGFM}
 
 
 def auroc(score: np.ndarray, positive: np.ndarray) -> float:
