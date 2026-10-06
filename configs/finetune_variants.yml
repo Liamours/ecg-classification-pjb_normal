@@ -1,0 +1,10 @@
+base: configs/finetune_single.yml   # model, split, data and every setting not varied here
+factors:                            # every combination is one variant, trained on the base split and compared on its val pages
+  head_init: [random, probe]        # probe: output layer started from a linear probe on the frozen embedding (LP-FT, Kumar et al. 2022, arXiv 2202.10054)
+  stop_on: [val_micro_f1, val_loss]
+  pos_weight_max: [50, 1]           # 1: unweighted BCE, as in the PTB-XL benchmark (Strodthoff et al. 2021)
+probe: {C_grid: [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0], class_weight: balanced, max_iter: 3000, jobs: 4}   # same as configs/linear_probe.yml
+select_by: val_overall_micro_f1     # val score at each variant's best epoch that picks the variant scored on test
+out_dir: '@inferences/finetune_variants'
+report_dir: '@analyses/finetune_variants'
+log_dir: '@logs'

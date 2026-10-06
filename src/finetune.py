@@ -27,12 +27,14 @@ from pathlib import Path
 import numpy as np
 import torch
 import yaml
+from joblib import Parallel, delayed
+from sklearn.preprocessing import StandardScaler
 from torch import nn
 from torch.utils.data import DataLoader
 
 from src import paths
 from src.infer import Pages
-from src.linear_probe import label_matrix, load_folds, metrics, normal_vs_pjb, write_csv, write_report
+from src.linear_probe import fit_label, label_matrix, load_folds, metrics, normal_vs_pjb, write_csv, write_report
 from src.models import MODELS
 from src.progress import Progress, clock
 from src.thresholds import choose, parents, predict
@@ -98,9 +100,52 @@ def scores(net: Net, x: np.ndarray, bs: int, device: str) -> np.ndarray:
     return np.concatenate(out)
 
 
+def embed(net: Net, x: np.ndarray, bs: int, device: str) -> np.ndarray:
+    net.eval()
+    out = []
+    with torch.inference_mode(), torch.autocast(device_type="cuda", enabled=device == "cuda"):
+        for i in range(0, len(x), bs):
+            out.append(net.adapter.forward(torch.from_numpy(x[i:i + bs]).to(device)).float().cpu().numpy())
+    return np.concatenate(out)
+
+
+def probe_head(net: Net, x, y, train_idx, val_idx, probe: dict, bs: int, device: str) -> None:
+    """Linear probe then fine-tune (LP-FT, Kumar et al. 2022): the output layer starts from per-label logistic regressions on the
+    frozen embedding (`src.linear_probe.fit_label`: C per label on val by average precision), with the train standardization folded
+    into the weights. Labels without a fit keep the random start."""
+    etr, eva = embed(net, x[train_idx], bs, device), embed(net, x[val_idx], bs, device)
+    sc = StandardScaler().fit(etr)
+    ztr, zva = sc.transform(etr), sc.transform(eva)
+    fits = Parallel(n_jobs=probe["jobs"])(delayed(fit_label)(ztr, y[train_idx, j], zva, y[val_idx, j], probe) for j in range(y.shape[1]))
+    with torch.no_grad():
+        for j, (_, clf) in enumerate(fits):
+            if clf is None:
+                continue
+            w = clf.coef_[0] / sc.scale_
+            net.head.weight[j] = torch.from_numpy(w).float()
+            net.head.bias[j] = float(clf.intercept_[0] - w @ sc.mean_)
+
+
+def validate(net: Net, x, y, val_idx, parent, loss_fn, bs: int, device: str) -> tuple[dict, dict]:
+    """Val loss, per-level thresholds chosen on val, and val metrics per level and for NORMAL vs PJB; (history columns, thresholds)."""
+    prob = scores(net, x[val_idx], bs, device)
+    t = choose(prob, y[val_idx], parent)
+    pred = predict(prob, t, parent)
+    logit = torch.logit(torch.from_numpy(prob).clamp(1e-6, 1 - 1e-6)).to(device)
+    row = {"val_loss": loss_fn(logit, torch.from_numpy(y[val_idx].astype(np.float32)).to(device)).item(), "threshold_group": t["group"], "threshold_diagnosis": t["diagnosis"]}
+    names = [f"group: {j}" if parent[j] < 0 else f"diagnosis: {j}" for j in range(y.shape[1])]
+    for level, m in metrics(y[val_idx], pred, names)[1].items():
+        row |= {f"val_{level}_{k}": v for k, v in m.items()}
+    b = normal_vs_pjb(y[val_idx], pred)
+    row |= {f"val_binary_{k}": b[k] for k in ("normal_f1", "pjb_f1", "macro_f1", "normal_sensitivity", "pjb_sensitivity")}
+    return row, t
+
+
 def train(spec, cfg, x, y, train_idx, val_idx, parent, epochs_fixed, ckpt: Path, device, note, log, on_epoch=None) -> tuple[Net, dict, int]:
-    """Train on train_idx; early stopping on val micro F1 (or a fixed epoch count when val_idx is empty). Resumes from ckpt.
-    `on_epoch(state, loss, best_text)` replaces the default epoch line when given."""
+    """Train on train_idx; early stopping on `stop_on` (val_micro_f1 or val_loss; a fixed epoch count when val_idx is empty).
+    `head_init: probe` starts the output layer from a linear probe (`probe_head`) and records that start as epoch 0, so the probe
+    itself is kept when no fine-tuned epoch beats it. Resumes from ckpt. `on_epoch(state, loss, best_text)` replaces the default
+    epoch line when given."""
     torch.manual_seed(cfg["seed"])
     net = build(spec, y.shape[1], device)
     groups = [{"params": [p for p in net.backbone.parameters() if p.requires_grad], "lr": cfg["lr"]["backbone"]}, {"params": net.head.parameters(), "lr": cfg["lr"]["head"]}]
@@ -108,15 +153,43 @@ def train(spec, cfg, x, y, train_idx, val_idx, parent, epochs_fixed, ckpt: Path,
     scaler = torch.amp.GradScaler("cuda", enabled=device == "cuda")
     pos = y[train_idx].sum(0)
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(np.clip((len(train_idx) - pos) / np.maximum(pos, 1), 1, cfg["pos_weight_max"]), dtype=torch.float32, device=device))
-    state = {"epoch": 0, "best_f1": -1.0, "best_epoch": 0, "stale": 0, "thresholds": {"group": 0.5, "diagnosis": 0.5}}
+    state = {"epoch": 0, "best_score": float("-inf"), "best_epoch": 0, "stale": 0, "thresholds": {"group": 0.5, "diagnosis": 0.5}}
+    best_path = ckpt.with_name(ckpt.stem + "_best.pt")
+    max_epochs = epochs_fixed or cfg["max_epochs"]
+    xt, yt = torch.from_numpy(x[train_idx]), torch.from_numpy(y[train_idx].astype(np.float32))
+
+    def close_epoch(row: dict, t0: float) -> None:
+        if len(val_idx):
+            m, t = validate(net, x, y, val_idx, parent, loss_fn, spec["batch_size"], device)
+            row |= m
+            score = float(m["val_overall_micro_f1"] if cfg["stop_on"] == "val_micro_f1" else -m["val_loss"])
+            row["is_best"] = int(score > state["best_score"])
+            if score > state["best_score"]:
+                state.update(best_score=score, best_epoch=state["epoch"], stale=0, thresholds=t)
+                torch.save(net.state_dict(), best_path)
+            else:
+                state["stale"] += 1
+        else:
+            torch.save(net.state_dict(), best_path)
+            state["best_epoch"] = state["epoch"]
+        row |= {"best_epoch": state["best_epoch"], "epochs_without_improvement": state["stale"], "seconds": time.time() - t0}
+        history(ckpt, row, state["epoch"])
+        torch.save({"model": net.state_dict(), "opt": opt.state_dict(), "scaler": scaler.state_dict(), "state": state}, ckpt)  # latest weights; the best are in best_path
+
     if ckpt.exists():
         c = torch.load(ckpt, map_location=device, weights_only=True)
         net.load_state_dict(c["model"]), opt.load_state_dict(c["opt"]), scaler.load_state_dict(c["scaler"])
         state = c["state"]
+        state.setdefault("best_score", state.pop("best_f1", float("-inf")))
         log.info("%s: resumed after epoch %d", note, state["epoch"])
-    best_path = ckpt.with_name(ckpt.stem + "_best.pt")
-    max_epochs = epochs_fixed or cfg["max_epochs"]
-    xt, yt = torch.from_numpy(x[train_idx]), torch.from_numpy(y[train_idx].astype(np.float32))
+    elif cfg["head_init"] == "probe":
+        t0 = time.time()
+        probe_head(net, x, y, train_idx, val_idx, cfg["probe"], spec["batch_size"], device)
+        prob = scores(net, x[train_idx], spec["batch_size"], device)
+        logit = torch.logit(torch.from_numpy(prob).clamp(1e-6, 1 - 1e-6)).to(device)
+        close_epoch({"epoch": 0, "train_loss": loss_fn(logit, yt.to(device)).item(), "lr_backbone": 0.0, "lr_head": 0.0}, t0)
+        log.info("%s: output layer started from the linear probe in %s", note, clock(time.time() - t0))
+    stop_name = "val micro F1" if cfg["stop_on"] == "val_micro_f1" else "val loss"
     while state["epoch"] < max_epochs and state["stale"] < cfg["patience"]:
         net.train()
         perm = torch.randperm(len(train_idx))
@@ -132,31 +205,8 @@ def train(spec, cfg, x, y, train_idx, val_idx, parent, epochs_fixed, ckpt: Path,
             scaler.update()
             total += loss.item() * len(b)
         state["epoch"] += 1
-        row = {"epoch": state["epoch"], "train_loss": total / len(train_idx), "lr_backbone": opt.param_groups[0]["lr"], "lr_head": opt.param_groups[1]["lr"]}
-        if len(val_idx):
-            prob = scores(net, x[val_idx], spec["batch_size"], device)
-            t = choose(prob, y[val_idx], parent)
-            pred = predict(prob, t, parent)
-            f1 = _micro(y[val_idx], pred)
-            logit = torch.logit(torch.from_numpy(prob).clamp(1e-6, 1 - 1e-6)).to(device)
-            row["val_loss"] = loss_fn(logit, torch.from_numpy(y[val_idx].astype(np.float32)).to(device)).item()
-            row |= {"threshold_group": t["group"], "threshold_diagnosis": t["diagnosis"]}
-            names = [f"group: {j}" if parent[j] < 0 else f"diagnosis: {j}" for j in range(y.shape[1])]
-            for level, m in metrics(y[val_idx], pred, names)[1].items():
-                row |= {f"val_{level}_{k}": v for k, v in m.items()}
-            row["is_best"] = int(f1 > state["best_f1"])
-            if f1 > state["best_f1"]:
-                state.update(best_f1=f1, best_epoch=state["epoch"], stale=0, thresholds=t)
-                torch.save(net.state_dict(), best_path)
-            else:
-                state["stale"] += 1
-        else:
-            torch.save(net.state_dict(), best_path)
-            state["best_epoch"] = state["epoch"]
-        row |= {"best_epoch": state["best_epoch"], "epochs_without_improvement": state["stale"], "seconds": time.time() - t0}
-        history(ckpt, row, state["epoch"])
-        torch.save({"model": net.state_dict(), "opt": opt.state_dict(), "scaler": scaler.state_dict(), "state": state}, ckpt)  # latest weights; the best are in best_path
-        best = f"val micro F1 best {state['best_f1']:.4f} (epoch {state['best_epoch']})" if len(val_idx) else "no validation, fixed epoch count"
+        close_epoch({"epoch": state["epoch"], "train_loss": total / len(train_idx), "lr_backbone": opt.param_groups[0]["lr"], "lr_head": opt.param_groups[1]["lr"]}, t0)
+        best = f"best {stop_name} {abs(state['best_score']):.4f} (epoch {state['best_epoch']})" if len(val_idx) else "no validation, fixed epoch count"
         log.info("%s: epoch %d, train loss %.4f, %s, %s", note, state["epoch"], total / len(train_idx), best, clock(time.time() - t0))
         if on_epoch:
             on_epoch(state, total / len(train_idx), best)
@@ -176,11 +226,6 @@ def history(ckpt: Path, row: dict, epoch: int) -> None:
         w = csv.DictWriter(fh, fieldnames=list(rows[-1]))
         w.writeheader()
         w.writerows(rows)
-
-
-def _micro(y: np.ndarray, pred: np.ndarray) -> float:
-    tp, fp, fn = (y & pred).sum(), (~y & pred).sum(), (y & ~pred).sum()
-    return float(2 * tp / max(2 * tp + fp + fn, 1))
 
 
 def main() -> None:

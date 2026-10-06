@@ -22,7 +22,9 @@ lr: {backbone: 1.0e-5, head: 1.0e-4}   # differential learning rate for a pretra
 weight_decay: 0.01                  # AdamW default in PyTorch, not tuned
 max_epochs: 60                      # 30 capped ECGFounder on 5 of 15 folds
 patience: 8                         # epochs without a better validation micro F1 before stopping; the single ECGFounder run (finetune_single) peaked at epoch 10 and stopped at 18
-pos_weight_max: 50                  # cap of the per-label positive weight (negatives / positives on train) in the BCE loss
+head_init: random                   # random, or probe: output layer started from a linear probe on the frozen embedding (LP-FT; needs a `probe` block like configs/finetune_variants.yml)
+stop_on: val_micro_f1               # val_micro_f1 or val_loss: the validation score that picks the best epoch and drives early stopping
+pos_weight_max: 50                 # cap of the per-label positive weight (negatives / positives on train) in the BCE loss
 augment: {amplitude: 0.1, noise: 0.02, shift: 0.1}   # per training sample: lead amplitude scaled by 1 +- 0.1, Gaussian noise at 0.02 of the signal SD, circular time shift up to 10 percent
 workers: 4                          # data-loader processes for the one-time input preparation
 keep_fold_checkpoints: false        # fold checkpoints are deleted once the fold's predictions are saved; the final models are kept

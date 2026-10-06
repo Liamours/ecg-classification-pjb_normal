@@ -21,10 +21,13 @@ lr: {backbone: 1.0e-5, head: 1.0e-4}
 weight_decay: 0.01
 max_epochs: 60                      # the folds run hit the 30-epoch cap on 5 of 15 folds
 patience: 8
+head_init: random                   # random, or probe (LP-FT, see configs/finetune.yml)
+stop_on: val_micro_f1               # val_micro_f1 or val_loss
 pos_weight_max: 50
 augment: {amplitude: 0.1, noise: 0.02, shift: 0.1}
 workers: 4
 seed: 42
+inputs_dir: '@inferences/finetune_single'   # prepared model inputs (cache), shared with configs/finetune_variants.yml
 out_dir: '@inferences/finetune_single'
 report_dir: '@analyses/finetune_single'
 log_dir: '@logs'

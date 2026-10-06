@@ -89,3 +89,9 @@ uv run python -m src.probe --config configs/probe/ecg_jepa_random.yml
 ```
 powershell -ExecutionPolicy Bypass -File scripts\run_finetune.ps1 --models ecgfounder
 ```
+
+`src.finetune_single` (`configs/finetune_single.yml`) trains one model on one split of the folds (ECGFounder, repeat 1 fold 1) and keeps it (`results/inferences/finetune_single/model.pt`), with every epoch in `checkpoint_epochs.csv` and the test report in `results/analyses/finetune_single/`. `src.finetune_variants` (`configs/finetune_variants.yml`) trains every combination of output-layer start (random or a linear probe on the frozen embedding, LP-FT), early-stopping score (validation micro F1 or validation loss) and positive-weight cap (50 or 1) on that split, ranks them on validation (`results/analyses/finetune_variants/variants.csv`) and scores only the top variant on the test pages.
+
+```
+uv run python -m src.finetune_variants --config configs/finetune_variants.yml
+```
