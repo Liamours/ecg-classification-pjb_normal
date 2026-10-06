@@ -10,6 +10,10 @@ runs:                  # model run folders under @inferences holding <dataset>/p
   - classify_signal-hubert_ecg_tile
   - classify_signal-ecg_fm
   - classify_signal-ecg_fm_tile
+  - classify_signal-merl_res18
+  - classify_signal-merl_res18_tile
+  - classify_signal-merl_vit_tiny
+  - classify_signal-merl_vit_tiny_tile
 groups:                # ACC-CHD (Houyel et al. 2011, IPCCC-based) group of each detailed label; other = not a structural defect
   NORMAL: normal
   PLSVC: 2 venous return

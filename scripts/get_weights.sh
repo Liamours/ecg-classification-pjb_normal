@@ -16,3 +16,7 @@ mkdir -p "$fm"
 for f in mimic_iv_ecg_finetuned.pt mimic_iv_ecg_finetuned.yaml; do
   [ -f "$fm/$f" ] || curl -L --fail --progress-bar -o "$fm/$f" "https://huggingface.co/wanglab/ecg-fm/resolve/main/$f"
 done
+# MERL ECG-text checkpoints (MIT, the authors' Google Drive folder from github.com/cheliu-computation/MERL-ICML2024) and its text encoder MedCPT-Query-Encoder (public domain)
+merl="$(dirname "$0")/../../../models/merl-pretrained"
+[ -f "$merl/vit_tiny_best_ckpt.pth" ] || uv run --with gdown python -m gdown --folder "https://drive.google.com/drive/folders/13wb4DppUciMn-Y_qC2JRWTbZdz3xX0w2" -O "$merl"
+uv run python -c "from huggingface_hub import snapshot_download; snapshot_download('ncbi/MedCPT-Query-Encoder', local_dir='$(dirname "$0")/../../../models/medcpt_query_encoder-pretrained')"

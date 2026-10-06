@@ -7,9 +7,13 @@ Each model's preprocessing repeats its upstream code:
   [-1, 1], first 5 s at 500 Hz, missing values set to the mean, the 12 leads flattened and decimated by 5 to 100 Hz.
 - `ecg_fm` (ECG-FM infer_quickstart.ipynb with ecg-transform 0.1.3): leads I to V6 at 500 Hz, each lead z-scored, a constant
   or missing lead set to 0, one 5 s window.
+- `merl` (MERL finetune_dataset.py, ICBEB branch for short records): leads I to V6 at 500 Hz, the record zero-padded to 10 s,
+  one min-max scaling of the whole array to [0, 1], aVL and aVF swapped to the MIMIC-IV-ECG order. Zero-shot: the output per
+  prompt is the cosine similarity between the ECG embedding and the prompt's text embedding (upstream zeroshot_val.py);
+  prompts are the authors' CKEPE_prompt.json plus `prompts` in the config.
 `fill` sets how a lead shorter than the input reaches its length: `zero` leaves it missing (filled as above), `tile` repeats
 the lead's digitized stretch. Writes <out_dir>/<dataset>/predictions.csv: page, relative_path, label, leads_ok, then one
-sigmoid output per model label. Resumable per page. For labeled pages the summary ranks outputs by AUROC between PJB and NORMAL.
+output per model label (sigmoid probability, or cosine similarity for `merl`). Resumable per page. For labeled pages the summary ranks outputs by AUROC between PJB and NORMAL.
 
 Usage:
     uv run python -m src.classify_signal --config configs/classify_signal.yml
@@ -47,7 +51,12 @@ def fit_length(x: np.ndarray, n: int, fill: str) -> np.ndarray:
     return np.pad(x, ((0, 0), (0, max(0, n - x.shape[1]))), constant_values=np.nan)[:, :n]
 
 
-class ECGFounder:
+class Sigmoid:
+    def activate(self, logits: torch.Tensor) -> torch.Tensor:
+        return torch.sigmoid(logits)
+
+
+class ECGFounder(Sigmoid):
     def __init__(self, cfg: dict):
         sys.path.insert(0, str(REPO / "third_party" / "ecgfounder"))
         from net1d import Net1D
@@ -65,7 +74,7 @@ class ECGFounder:
         return self.model(batch)
 
 
-class HuBERTECG:
+class HuBERTECG(Sigmoid):
     def __init__(self, cfg: dict):
         sys.path.insert(0, str(REPO / "third_party"))
         import hubert_ecg  # noqa: F401  registers the model type with transformers
@@ -89,7 +98,7 @@ class HuBERTECG:
         return self.model(batch, attention_mask=None).logits
 
 
-class ECGFM:
+class ECGFM(Sigmoid):
     def __init__(self, cfg: dict):
         sys.path.insert(0, str(REPO / "third_party"))
         from fairseq_signals.models import build_model_from_checkpoint
@@ -112,7 +121,39 @@ class ECGFM:
         return self.model(source=batch)["out"]
 
 
-MODELS = {"ecgfounder": ECGFounder, "hubert_ecg": HuBERTECG, "ecg_fm": ECGFM}
+class MERL:
+    def __init__(self, cfg: dict):
+        sys.path.insert(0, str(REPO / "third_party" / "merl"))
+        import utils_builder
+        network = {"ecg_model": cfg["arch"], "num_leads": 12, "text_model": str(paths.resolve(cfg["text_model"])), "free_layers": 6, "feature_dim": 768,
+                   "projection_head": {"mlp_hidden_size": 256, "projection_size": 256}}
+        self.model = utils_builder.ECGCLIP(network)
+        self.model.load_state_dict(torch.load(paths.resolve(cfg["weights"]), map_location="cpu", weights_only=True), strict=True)
+        self.model.eval()
+        prompts = json.loads((REPO / "third_party/merl/CKEPE_prompt.json").read_text(encoding="utf-8")) | cfg["prompts"]
+        self.labels = list(prompts)
+        with torch.no_grad():  # upstream get_class_emd: lower-cased prompt, text encoder, projection, unit norm
+            emb = []
+            for text in prompts.values():
+                tok = self.model.tokenizer([text.lower()], add_special_tokens=True, truncation=True, max_length=256, padding="max_length", return_tensors="pt")  # upstream _tokenize; batch_encode_plus is gone in transformers 5
+                e = self.model.proj_t(self.model.get_text_emb(tok.input_ids, tok.attention_mask))
+                emb.append((e / e.norm(dim=-1, keepdim=True)).mean(0))
+            self.text = torch.stack([e / e.norm() for e in emb], dim=1)
+
+    def prepare(self, x: np.ndarray, fill: str) -> np.ndarray:
+        x = np.nan_to_num(fit_length(x, 10 * FS, fill), nan=0.0)
+        x = (x - x.min()) / (x.max() - x.min() + 1e-8)
+        return x[[0, 1, 2, 3, 5, 4, 6, 7, 8, 9, 10, 11]].astype(np.float32)
+
+    def __call__(self, batch: torch.Tensor) -> torch.Tensor:
+        emb = self.model.ext_ecg_emb(batch)
+        return (emb / emb.norm(dim=-1, keepdim=True)) @ self.text.to(batch.device)
+
+    def activate(self, scores: torch.Tensor) -> torch.Tensor:
+        return scores
+
+
+MODELS = {"ecgfounder": ECGFounder, "hubert_ecg": HuBERTECG, "ecg_fm": ECGFM, "merl": MERL}
 
 
 def auroc(score: np.ndarray, positive: np.ndarray) -> float:
@@ -162,7 +203,7 @@ def main() -> None:
             batch = todo[start:start + cfg["batch_size"]]
             x = torch.from_numpy(np.stack([model.prepare(read_record(p), cfg["fill"]) for p in batch])).to(cfg["device"])
             with torch.no_grad():
-                probs = torch.sigmoid(model(x)).cpu().numpy()
+                probs = model.activate(model(x)).cpu().numpy()
             rows = []
             for page_dir, p in zip(batch, probs):
                 image = json.loads((page_dir / "record.json").read_text(encoding="utf-8"))["image"]

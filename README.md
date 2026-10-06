@@ -39,7 +39,7 @@ uv run python -m src.classify_image --config configs/classify_image.yml
 
 ## Signal inference with pretrained models
 
-`src.classify_signal` scores each digitized page (`record.csv` of a canonical digitize run) with a pretrained model, no fine-tuning: `ecgfounder` (ECGFounder 12-lead, 150 outputs, 10 s at 500 Hz) `hubert_ecg` (HuBERT-ECG BASE fine-tuned on Cardio-Learning, 164 outputs, 5 s at 100 Hz) or `ecg_fm` (ECG-FM fine-tuned on MIMIC-IV-ECG, 17 outputs, 5 s at 500 Hz, through the vendored `fairseq_signals`). Each model's preprocessing repeats its upstream code (module docstring). `fill` sets how a lead shorter than the model input reaches its length (`zero` leaves it missing, `tile` repeats its digitized stretch). Output `<out_dir>/<dataset>/predictions.csv` (page, relative_path, label, leads_ok, one column per output); the summary ranks outputs by AUROC between PJB and NORMAL pages.
+`src.classify_signal` scores each digitized page (`record.csv` of a canonical digitize run) with a pretrained model, no fine-tuning: `ecgfounder` (ECGFounder 12-lead, 150 outputs, 10 s at 500 Hz) `hubert_ecg` (HuBERT-ECG BASE fine-tuned on Cardio-Learning, 164 outputs, 5 s at 100 Hz) `ecg_fm` (ECG-FM fine-tuned on MIMIC-IV-ECG, 17 outputs, 5 s at 500 Hz, through the vendored `fairseq_signals`) or `merl` (MERL ECG-text model, zero-shot: cosine similarity to text prompts, the authors' 131 plus our defect names in the config; ResNet18 or ViT-tiny ECG encoder). Each model's preprocessing repeats its upstream code (module docstring). `fill` sets how a lead shorter than the model input reaches its length (`zero` leaves it missing, `tile` repeats its digitized stretch). Output `<out_dir>/<dataset>/predictions.csv` (page, relative_path, label, leads_ok, one column per output); the summary ranks outputs by AUROC between PJB and NORMAL pages.
 
 ```
 bash scripts/get_weights.sh
@@ -49,6 +49,7 @@ uv run python -m src.classify_signal --config configs/classify_signal_hubert.yml
 uv run python -m src.classify_signal --config configs/classify_signal_hubert_tile.yml
 uv run python -m src.classify_signal --config configs/classify_signal_ecg_fm.yml
 uv run python -m src.classify_signal --config configs/classify_signal_ecg_fm_tile.yml
+uv run python -m src.classify_signal --config configs/classify_signal_merl_res18.yml   # and _merl_vit_tiny, each with _tile
 ```
 
 ## Choosing the label schema from the model outputs
