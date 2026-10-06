@@ -2,11 +2,28 @@ dataset: mac400-phone_photo
 label_column: diagnosis_label
 detailed_column: diagnosis_labels_detailed
 groups_config: configs/label_schema.yml   # ACC-CHD group of each detailed label
-min_pages: 10          # a label is scored when at least this many pages carry it
 C: 1.0                 # scikit-learn's stock L2 strength on standardized features, not tuned
 class_weight: balanced # each label's positives and negatives weigh equally, so the 0.5 threshold is not set by prevalence
 threshold: 0.5
-out_dir: '@analyses/compare_early'
+out_dir: '@analyses/compare_schemas'
+unknown_label: CHD, diagnosis unknown   # a CHD page whose file name carries no diagnosis, so it is not read as NORMAL
+schemas:               # NORMAL is the empty label set in every schema: a page with no label predicted is NORMAL
+  binary: {kind: binary}                                   # 1 label, CHD
+  first_listed: {kind: first}                              # first diagnosis in the file name, one label per CHD page
+  groups_all: {kind: group}                                # every ACC-CHD group
+  diagnoses_merged_all: {kind: merged}                     # every diagnosis, variant names merged into their parent
+  diagnoses_all: {kind: diagnosis}                         # every diagnosis as written
+  tree_all: {kind: tree}                                   # CHD, every group and every diagnosis at once
+  groups_min10: {kind: group, min_pages: 10, fallback: other CHD}       # reference: the early comparison's group schema
+  diagnoses_min10: {kind: diagnosis, min_pages: 10, fallback: other CHD} # reference: the early comparison's diagnosis schema
+merge:                 # variant name: parent diagnosis
+  AVSD INCOMPLETE: AVSD
+  CAVSD: AVSD
+  EXTREME TOF: TOF
+  PENTALOGY OF FALLOT: TOF
+  CRITICAL PS: PS
+  LARGE PDA: PDA
+  MULTIPLE ASD: ASD
 runs:                  # run folder under @inferences: features are its saved predictions.csv or embeddings.csv for the dataset
   ecgfounder: infer-ecgfounder
   ecgfounder_tile: infer-ecgfounder_tile
@@ -14,6 +31,12 @@ runs:                  # run folder under @inferences: features are its saved pr
   ecg_jepa_random: infer-ecg_jepa_random
   ecg_fm: infer-ecg_fm
   ecg_fm_tile: infer-ecg_fm_tile
+  hubert_ecg: infer-hubert_ecg            # unsuitable (CC BY-NC), kept for reference
+  hubert_ecg_tile: infer-hubert_ecg_tile
+  merl_res18: infer-merl_res18            # unsuitable (superseded by MELP), kept for reference
+  merl_res18_tile: infer-merl_res18_tile
+  merl_vit_tiny: infer-merl_vit_tiny
+  merl_vit_tiny_tile: infer-merl_vit_tiny_tile
 batches:               # collection batch of each source folder; folds hold out one batch at a time
   NORMAL: undated
   PJB: undated
