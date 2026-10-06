@@ -1,8 +1,10 @@
 """Early comparison of pretrained models on our multi-label CHD labels, one protocol for every model.
 
 Features: each model run's saved per-page outputs (`predictions.csv` label outputs or `embeddings.csv`). Labels: two
-multi-label schemas on the labeled phone photos, `detailed` (every defect with at least `min_pages` pages, plus CHD = any
-defect) and `acc_chd` (ACC-CHD groups, plus CHD); NORMAL pages carry no label. Each label is scored against all other pages.
+multi-label schemas on the labeled phone photos, `detailed` (every specific diagnosis with at least `min_pages` pages) and
+`acc_chd` (every ACC-CHD group with at least `min_pages` pages); the rest of the CHD pages' diagnoses, and a CHD page with none,
+go to `other CHD`, so every CHD page has a label. NORMAL is the empty label set, and a page with no label predicted is NORMAL;
+non-normal vs normal is derived from it (score: the highest label probability). Each label is scored against all other pages.
 Classifier: one L2 logistic regression per label on standardized features (balanced class weights, threshold 0.5); folds hold
 out one collection batch at a time, so every score is out of fold. Writes to `out_dir`:
 - `<schema>/scores-<model>.csv`: out-of-fold probability and 0/1 prediction per page and label
@@ -49,14 +51,15 @@ def label_matrix(cfg: dict, pages: list[str]) -> dict[str, tuple[list[str], np.n
         manifest = {r["relative_path"]: r for r in csv.DictReader(fh)}
     groups = yaml.safe_load((REPO / cfg["groups_config"]).read_text(encoding="utf-8"))["groups"]
     sets = [set(json.loads(manifest[p][cfg["detailed_column"]] or "[]")) - {"NORMAL"} for p in pages]
-    chd = np.array([manifest[p][cfg["label_column"]] == "PJB" for p in pages])
+    chd = [manifest[p][cfg["label_column"]] == "PJB" for p in pages]
     schemas = {}
     for name, mapper in [("detailed", lambda d: d), ("acc_chd", lambda d: groups[d])]:
-        mapped = [{mapper(d) for d in s} - {"other", "normal"} for s in sets]
-        labels = sorted({m for s in mapped for m in s}, key=lambda m: -sum(m in s for s in mapped))
-        labels = [m for m in labels if sum(m in s for s in mapped) >= cfg["min_pages"]]
-        y = np.column_stack([chd] + [[m in s for s in mapped] for m in labels])
-        schemas[name] = (["CHD"] + labels, y)
+        mapped = [{mapper(d) for d in s} for s in sets]
+        counts = {m: sum(m in s for s in mapped) for m in {m for s in mapped for m in s}}
+        labels = [m for m in sorted(counts, key=lambda m: -counts[m]) if counts[m] >= cfg["min_pages"] and m != "other"]
+        mapped = [(s & set(labels)) | ({"other CHD"} if c and not s <= set(labels) or c and not s else set()) for s, c in zip(mapped, chd)]
+        labels.append("other CHD")
+        schemas[name] = (labels, np.column_stack([[m in s for s in mapped] for m in labels]))
     return schemas
 
 
@@ -116,7 +119,9 @@ def main() -> None:
                                                          **{f"{l} pred": int(pred[i, j]) for j, l in enumerate(labels)}} for i, p in enumerate(pages)])
             label_rows = [{"model": model, "label": l, **per_label(y, prob, pred, j)} for j, l in enumerate(labels)]
             rows += label_rows
-            summary.append({"model": model, "labels": len(labels), "macro_auroc": float(np.mean([r["auroc"] for r in label_rows])),
+            chd, chd_score, chd_pred = y.any(1), prob.max(1), pred.any(1)
+            summary.append({"model": model, "labels": len(labels), "chd_auroc": roc_auc_score(chd, chd_score), "chd_f1": f1_score(chd, chd_pred),
+                            "chd_sensitivity": float(chd_pred[chd].mean()), "normal_specificity": float((~chd_pred[~chd]).mean()), "macro_auroc": float(np.mean([r["auroc"] for r in label_rows])),
                             "macro_auprc": float(np.mean([r["auprc"] for r in label_rows])), "micro_f1": f1_score(y, pred, average="micro", zero_division=0),
                             "macro_f1": f1_score(y, pred, average="macro", zero_division=0), "hamming_loss": hamming_loss(y, pred),
                             "exact_set_accuracy": float((pred == y).all(1).mean()), "mean_jaccard": jaccard_score(y, pred, average="samples", zero_division=1)})
@@ -132,9 +137,9 @@ def main() -> None:
                     "label_disagreement_rate": float((allp != allp[0]).any(0).mean())})
         write(out / schema / "disagreement.csv", dis)
         print(f"\n{schema}: {len(pages)} pages, labels {labels}")
-        print("| Model | Macro AUROC | Macro AUPRC | Micro F1 | Macro F1 | Hamming loss | Exact-set accuracy | Mean Jaccard |\n|---|---|---|---|---|---|---|---|")
+        print("| Model | Macro AUROC | Macro F1 | Micro F1 | Hamming loss | Exact-set accuracy | CHD AUROC | CHD sensitivity | NORMAL specificity |\n|---|---|---|---|---|---|---|---|---|")
         for s in summary:
-            print(f"| {s['model']} | {s['macro_auroc']:.4f} | {s['macro_auprc']:.4f} | {s['micro_f1']:.4f} | {s['macro_f1']:.4f} | {s['hamming_loss']:.4f} | {s['exact_set_accuracy']:.4f} | {s['mean_jaccard']:.4f} |")
+            print(f"| {s['model']} | {s['macro_auroc']:.4f} | {s['macro_f1']:.4f} | {s['micro_f1']:.4f} | {s['hamming_loss']:.4f} | {s['exact_set_accuracy']:.4f} | {s['chd_auroc']:.4f} | {s['chd_sensitivity']:.4f} | {s['normal_specificity']:.4f} |")
 
 
 if __name__ == "__main__":
