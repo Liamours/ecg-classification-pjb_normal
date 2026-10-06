@@ -36,3 +36,13 @@ Resumable: a page already in `index.csv` is skipped. A log goes to `logs/records
 ```
 uv run python -m src.classify_image --config configs/classify_image.yml
 ```
+
+## Signal inference with ECGFounder
+
+`src.classify_signal` scores each digitized page (`record.csv` of a canonical digitize run) with the pretrained 12-lead ECGFounder (Net1D, 150 sigmoid outputs, labels in `third_party/ecgfounder/tasks.txt`), no fine-tuning. Preprocessing follows the upstream `ptbxl_eval.py`: lead order I to V6, missing values 0, one z-score over the whole array. The model takes 10 s at 500 Hz; `fill` sets how the 4 s record reaches 10 s (`zero` pads, `tile` repeats each lead's digitized stretch). Output `<out_dir>/<dataset>/predictions.csv` (page, relative_path, label, leads_ok, one column per output); the summary ranks outputs by AUROC between PJB and NORMAL pages.
+
+```
+bash scripts/get_weights.sh
+uv run python -m src.classify_signal --config configs/classify_signal.yml
+uv run python -m src.classify_signal --config configs/classify_signal_tile.yml
+```

@@ -1,0 +1,14 @@
+model: ecgfounder
+weights: '@models/ecgfounder-pretrained/12_lead_ECGFounder.pth'   # ECGFounder 12-lead, 150 sigmoid outputs (third_party/ecgfounder/tasks.txt)
+tasks: third_party/ecgfounder/tasks.txt
+n_samples: 5000       # model input: 10 s at 500 Hz (Hugging Face config.json)
+fill: tile            # zero: missing values 0 and zero padding to 10 s (upstream sets missing values to 0); tile: each lead's digitized stretch repeated to 10 s
+device: cpu
+batch_size: 32
+runs:                 # dataset alias: digitize run holding <page>/record.csv and record.json
+  mac400-scan: '@inferences/canonical_mac400-scan'
+  mac400-phone_photo: '@inferences/canonical_mac400-phone_photo'
+label_column: diagnosis_label
+out_dir: '@inferences/classify_signal-ecgfounder_tile'
+log_dir: '@logs'
+top_k: 15             # labels listed in the printed summary
