@@ -1,0 +1,7 @@
+weights: '@models/archive/pjb_classification/yolo11n_v1/weights/best.pt'   # YOLO11n-cls, NORMAL vs PJB on whole page photos, trained 2026-09-08 on ekg-757 (now ecg-mac400-phone_photo)
+imgsz: 224            # training size (args.yaml of the run)
+device: cpu
+datasets: [mac400-scan, mac400-phone_photo]
+label_column: diagnosis_label
+out_dir: '@inferences/classify_image-yolo11n_v1'
+log_dir: '@logs'

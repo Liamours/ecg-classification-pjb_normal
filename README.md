@@ -28,3 +28,11 @@ uv run --with pytest python -m pytest tests -q
 ```
 
 Resumable: a page already in `index.csv` is skipped. A log goes to `logs/records-<out-dir name>-<date>.log`.
+
+## Image-direct inference
+
+`src.classify_image` runs a trained YOLO-cls model (`configs/classify_image.yml`, default the 2026-09-08 NORMAL/PJB model on whole page photos at 224 px) on every page with an ECG in each listed dataset's manifest and writes `<out_dir>/<dataset>/predictions.csv` (relative_path, label, pred, p_pjb), then prints the counts and, for labeled pages, recall per label. Resumable per page; log in `logs/`.
+
+```
+uv run python -m src.classify_image --config configs/classify_image.yml
+```
