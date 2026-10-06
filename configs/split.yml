@@ -1,0 +1,18 @@
+dataset: mac400-phone_photo
+label_column: diagnosis_label
+detailed_column: diagnosis_labels_detailed
+page_style: mac400        # pages the pipeline digitizes (754 of 757)
+duplicates: '@analyses/duplicates/pages.csv'   # md5 per page from src.duplicates; byte-identical photos form one study group
+batches:                  # collection batch of each source folder, part of the stratification
+  NORMAL: undated
+  PJB: undated
+  NORMAL 17.12.2024: 17.12.2024
+  PJB 17.12.2024: 17.12.2024
+  NORMAL 20.12.2024: 19-20.12.2024
+  PJB 19.12.2024: 19-20.12.2024
+  NORMAL Tambahan: Tambahan
+outer_folds: 5
+val_share: 0.2            # share of each outer training part held out for early stopping and thresholds
+seeds: [42, 43, 44]       # one per repeat
+out: '@mac400-phone_photo/_labels/manifest_folds.csv'
+counts: '@analyses/split/fold_counts.csv'
