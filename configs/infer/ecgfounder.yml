@@ -1,12 +1,12 @@
 model: ecgfounder
 weights: '@models/ecgfounder-pretrained/12_lead_ECGFounder.pth'   # ECGFounder 12-lead, 150 sigmoid outputs (third_party/ecgfounder/tasks.txt)
-fill: tile            # zero: a lead shorter than the model input stays missing and is filled by the model's upstream rule; tile: its digitized stretch is repeated to the input length
-device: cpu
+fill: zero            # zero: a lead shorter than the model input stays missing and is filled by the model's upstream rule; tile: its digitized stretch is repeated to the input length
+device: auto          # cuda when available
 batch_size: 32
+workers: 4            # data-loader processes for preprocessing, a quarter of the 16 logical cores (one heavy job at a time, wiki/overview/hardware.md)
 runs:                 # dataset alias: digitize run holding <page>/record.csv and record.json
   mac400-scan: '@inferences/canonical_mac400-scan'
   mac400-phone_photo: '@inferences/canonical_mac400-phone_photo'
 label_column: diagnosis_label
-out_dir: '@inferences/classify_signal-ecgfounder_tile'
+out_dir: '@inferences/infer-ecgfounder'
 log_dir: '@logs'
-top_k: 15             # labels listed in the printed summary

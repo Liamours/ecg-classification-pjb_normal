@@ -39,22 +39,27 @@ uv run python -m src.classify_image --config configs/classify_image.yml
 
 ## Signal inference with pretrained models
 
-`src.classify_signal` scores each digitized page (`record.csv` of a canonical digitize run) with a pretrained model, no fine-tuning: `ecgfounder` (ECGFounder 12-lead, 150 outputs, 10 s at 500 Hz) `hubert_ecg` (HuBERT-ECG BASE fine-tuned on Cardio-Learning, 164 outputs, 5 s at 100 Hz) `ecg_fm` (ECG-FM fine-tuned on MIMIC-IV-ECG, 17 outputs, 5 s at 500 Hz, through the vendored `fairseq_signals`) or `merl` (MERL ECG-text model, zero-shot: cosine similarity to text prompts, the authors' 131 plus our defect names in the config; ResNet18 or ViT-tiny ECG encoder). Each model's preprocessing repeats its upstream code (module docstring). `fill` sets how a lead shorter than the model input reaches its length (`zero` leaves it missing, `tile` repeats its digitized stretch). Output `<out_dir>/<dataset>/predictions.csv` (page, relative_path, label, leads_ok, one column per output); the summary ranks outputs by AUROC between PJB and NORMAL pages.
+`src.infer` runs one pretrained open-weight model on the digitized records (`record.csv` of a canonical digitize run) and saves every page's output: `<out_dir>/<dataset>/predictions.csv` for a model with a label head (one column per output), `embeddings.csv` for an encoder without one. Each model is an adapter in `src.models` that calls its authors' own model class and preprocessing (`third_party/`, licenses in `third_party/README.md`):
+
+| Config | Model | Output |
+|---|---|---|
+| `ecgfounder` | ECGFounder 12-lead, 10 s at 500 Hz | 150 labels |
+| `hubert_ecg` | HuBERT-ECG BASE fine-tuned on Cardio-Learning, 5 s at 100 Hz | 164 labels |
+| `ecg_fm` | ECG-FM fine-tuned on MIMIC-IV-ECG, 5 s at 500 Hz | 17 labels |
+| `merl_res18`, `merl_vit_tiny` | MERL ECG-text model, zero-shot | cosine similarity to 146 text prompts |
+| `ecg_jepa_multiblock`, `ecg_jepa_random` | ECG-JEPA encoder, 8 leads, 10 s at 250 Hz | 768-dimension embedding |
+
+Configs ending in `_tile` repeat each lead's digitized stretch to the model's input length instead of leaving the rest missing. Runs log progress, pages per second and ETA to `logs/`, resume from their output file, and preprocess in data-loader workers while the model runs on the GPU.
 
 ```
 bash scripts/get_weights.sh
-uv run python -m src.classify_signal --config configs/classify_signal.yml
-uv run python -m src.classify_signal --config configs/classify_signal_tile.yml
-uv run python -m src.classify_signal --config configs/classify_signal_hubert.yml
-uv run python -m src.classify_signal --config configs/classify_signal_hubert_tile.yml
-uv run python -m src.classify_signal --config configs/classify_signal_ecg_fm.yml
-uv run python -m src.classify_signal --config configs/classify_signal_ecg_fm_tile.yml
-uv run python -m src.classify_signal --config configs/classify_signal_merl_res18.yml   # and _merl_vit_tiny, each with _tile
+uv run python -m src.infer --config configs/infer/ecgfounder.yml
+bash scripts/run_infer_all.sh
 ```
 
 ## Choosing the label schema from the model outputs
 
-`src.label_schema` takes the labeled pages, and for every detailed defect and every ACC-CHD group (`configs/label_schema.yml`) against the NORMAL pages finds the model output with the highest |AUROC - 0.5| over all listed runs, next to its chance level from shuffled labels. No model is trained.
+`src.label_schema` takes the labeled pages, and for every detailed defect and every ACC-CHD group (`configs/label_schema.yml`) against the NORMAL pages finds the model output with the highest |AUROC - 0.5| over all listed runs, next to its chance level from shuffled labels. No model is trained. The table goes to `results/analyses/label_schema/label_schema.csv`.
 
 ```
 uv run python -m src.label_schema --config configs/label_schema.yml
@@ -62,9 +67,9 @@ uv run python -m src.label_schema --config configs/label_schema.yml
 
 ## Linear probe on encoders without a label head
 
-`src.probe` embeds every digitized page with a frozen encoder (`ecg_jepa`: ECG-JEPA, 8 leads, 10 s at 250 Hz, raw mV), then fits an L2 logistic regression on the standardized embeddings for PJB vs NORMAL and for every defect and ACC-CHD group against NORMAL. Folds hold out one collection batch at a time. Saved per dataset: `embeddings.npz`, `probe_scores.csv` (out-of-fold score per page on the labeled set; on other sets the score of a probe fit on all labeled pages) and `probe_auroc.csv`.
+`src.probe` fits an L2 logistic regression on the saved embeddings for PJB vs NORMAL and for every defect and ACC-CHD group against NORMAL, with folds that hold out one collection batch. Saved per dataset: `probe_scores.csv` (out-of-fold score per page on the labeled set; on other sets the score of a probe fit on all labeled pages) and `probe_auroc.csv`.
 
 ```
-uv run python -m src.probe --config configs/probe_ecg_jepa.yml
-uv run python -m src.probe --config configs/probe_ecg_jepa_random.yml
+uv run python -m src.probe --config configs/probe/ecg_jepa_multiblock.yml
+uv run python -m src.probe --config configs/probe/ecg_jepa_random.yml
 ```

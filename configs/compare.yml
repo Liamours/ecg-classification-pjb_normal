@@ -1,0 +1,37 @@
+dataset: mac400-phone_photo
+label_column: diagnosis_label
+detailed_column: diagnosis_labels_detailed
+groups_config: configs/label_schema.yml   # ACC-CHD group of each detailed label
+min_pages: 10          # a label is scored when at least this many pages carry it
+C: 1.0                 # scikit-learn's stock L2 strength on standardized features, not tuned
+class_weight: balanced # each label's positives and negatives weigh equally, so the 0.5 threshold is not set by prevalence
+threshold: 0.5
+out_dir: '@analyses/compare_early'
+runs:                  # run folder under @inferences: features are its saved predictions.csv or embeddings.csv for the dataset
+  ecgfounder: infer-ecgfounder
+  ecgfounder_tile: infer-ecgfounder_tile
+  ecg_jepa_multiblock: infer-ecg_jepa_multiblock
+  ecg_jepa_random: infer-ecg_jepa_random
+  ecg_fm: infer-ecg_fm
+  ecg_fm_tile: infer-ecg_fm_tile
+batches:               # collection batch of each source folder; folds hold out one batch at a time
+  NORMAL: undated
+  PJB: undated
+  NORMAL 17.12.2024: 17.12.2024
+  PJB 17.12.2024: 17.12.2024
+  NORMAL 20.12.2024: 19-20.12.2024
+  PJB 19.12.2024: 19-20.12.2024
+  NORMAL Tambahan: Tambahan
+chd_findings:          # pediatric ECG findings tied to congenital heart defects; a model output whose name matches one counts as fitting our labels
+  right ventricular hypertrophy: '\bRIGHT VENTRICULAR HYPERTROPHY\b|\bRVH\b'
+  right axis deviation: '\bRIGHT AXIS\b|\bRIGHTWARD AXIS\b|\bRIGHT SUPERIOR AXIS\b|\bRAD\b'
+  right atrial enlargement: '\bRIGHT ATRIAL\b|\bRAE\b|\bRAH\b|\bRAO/RAE\b'
+  right bundle branch block or rSR prime in V1: "\\bRIGHT BUNDLE\\b|\\bRBBB\\b|\\bIRBBB\\b|\\bCRBBB\\b|RSR'|RIGHT VENTRICULAR CONDUCTION"
+  left axis or left anterior fascicular block: '\bLEFT AXIS\b|\bLEFTWARD AXIS\b|\bLEFT ANTERIOR FASCICULAR\b|\bLAFB\b|\bLAD\b'
+  left ventricular hypertrophy: '\bLEFT VENTRICULAR HYPERTROPHY\b|\bLVH\b'
+  biventricular hypertrophy: '\bBIVENTRICULAR HYPERTROPHY\b'
+  left atrial enlargement: '\bLEFT ATRIAL ENLARGEMENT\b|\bLAE\b|\bLAA\b'
+  first degree AV block: '\b1ST DEGREE\b|\b1AVB\b|\bFIRST DEGREE\b'
+  complete heart block: '\bCOMPLETE HEART BLOCK\b|\b3AVB\b'
+  pre-excitation: '\bWOLFF\b|\bWPW\b|\bACCESSORY PATHWAY\b'
+  pediatric ECG: '\bPEDIATRIC\b'

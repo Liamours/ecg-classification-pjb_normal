@@ -1,0 +1,16 @@
+embeddings: '@inferences/infer-ecg_jepa_random'   # written by src.infer with configs/infer/ecg_jepa_random.yml
+out_dir: '@inferences/probe-ecg_jepa_random'
+dataset: mac400-phone_photo
+label_column: diagnosis_label
+detailed_column: diagnosis_labels_detailed
+groups_config: configs/label_schema.yml   # ACC-CHD group of each detailed label
+min_pages: 10
+C: 1.0                # scikit-learn's stock L2 strength on standardized embeddings, not tuned
+batches:              # collection batch of each source folder; folds hold out one batch at a time
+  NORMAL: undated
+  PJB: undated
+  NORMAL 17.12.2024: 17.12.2024
+  PJB 17.12.2024: 17.12.2024
+  NORMAL 20.12.2024: 19-20.12.2024
+  PJB 19.12.2024: 19-20.12.2024
+  NORMAL Tambahan: Tambahan

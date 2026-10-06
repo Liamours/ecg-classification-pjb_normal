@@ -5,16 +5,16 @@ min_pages: 10          # defects or groups with fewer pages than this are listed
 shuffles: 50           # label shuffles for the chance level of the best output (seed 42)
 out: '@analyses/label_schema/label_schema.csv'
 runs:                  # model run folders under @inferences holding <dataset>/predictions.csv
-  - classify_signal-ecgfounder
-  - classify_signal-ecgfounder_tile
-  - classify_signal-hubert_ecg
-  - classify_signal-hubert_ecg_tile
-  - classify_signal-ecg_fm
-  - classify_signal-ecg_fm_tile
-  - classify_signal-merl_res18
-  - classify_signal-merl_res18_tile
-  - classify_signal-merl_vit_tiny
-  - classify_signal-merl_vit_tiny_tile
+  - infer-ecgfounder
+  - infer-ecgfounder_tile
+  - infer-hubert_ecg
+  - infer-hubert_ecg_tile
+  - infer-ecg_fm
+  - infer-ecg_fm_tile
+  - infer-merl_res18
+  - infer-merl_res18_tile
+  - infer-merl_vit_tiny
+  - infer-merl_vit_tiny_tile
 groups:                # ACC-CHD (Houyel et al. 2011, IPCCC-based) group of each detailed label; other = not a structural defect
   NORMAL: normal
   PLSVC: 2 venous return
