@@ -21,10 +21,11 @@ models:                             # name: the src.infer config whose adapter, 
 lr: {backbone: 1.0e-5, head: 1.0e-4}   # differential learning rate for a pretrained backbone (coding.md default)
 weight_decay: 0.01                  # AdamW default in PyTorch, not tuned
 max_epochs: 60                      # 30 capped ECGFounder on 5 of 15 folds
-patience: 8                         # epochs without a better validation micro F1 before stopping; the single ECGFounder run (finetune_single) peaked at epoch 10 and stopped at 18
-head_init: random                   # random, or probe: output layer started from a linear probe on the frozen embedding (LP-FT; needs a `probe` block like configs/finetune_variants.yml)
-stop_on: val_micro_f1               # val_micro_f1 or val_loss: the validation score that picks the best epoch and drives early stopping
-pos_weight_max: 50                 # cap of the per-label positive weight (negatives / positives on train) in the BCE loss
+patience: 8                         # epochs without a better `stop_on` score before stopping
+head_init: probe                    # output layer started from a linear probe on the frozen embedding (LP-FT, Kumar et al. 2022); random: new layer. Chosen 2026-10-07 on val (results/analyses/finetune_variants)
+probe: {C_grid: [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0], class_weight: balanced, max_iter: 3000, jobs: 4}   # same as configs/linear_probe.yml
+stop_on: val_loss                   # val_loss or val_micro_f1: the validation score that picks the best epoch and drives early stopping; micro F1 gives no credit for a correct NORMAL page
+pos_weight_max: 1                   # cap of the per-label positive weight in the BCE loss; 1 = unweighted BCE (PTB-XL benchmark, Strodthoff et al. 2021), chosen over 50 on val
 augment: {amplitude: 0.1, noise: 0.02, shift: 0.1}   # per training sample: lead amplitude scaled by 1 +- 0.1, Gaussian noise at 0.02 of the signal SD, circular time shift up to 10 percent
 workers: 4                          # data-loader processes for the one-time input preparation
 keep_fold_checkpoints: false        # fold checkpoints are deleted once the fold's predictions are saved; the final models are kept
