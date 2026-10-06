@@ -20,3 +20,8 @@ done
 merl="$(dirname "$0")/../../../models/merl-pretrained"
 [ -f "$merl/vit_tiny_best_ckpt.pth" ] || uv run --with gdown python -m gdown --folder "https://drive.google.com/drive/folders/13wb4DppUciMn-Y_qC2JRWTbZdz3xX0w2" -O "$merl"
 uv run python -c "from huggingface_hub import snapshot_download; snapshot_download('ncbi/MedCPT-Query-Encoder', local_dir='$(dirname "$0")/../../../models/medcpt_query_encoder-pretrained')"
+# ECG-JEPA encoders, multi-block and random masking (MIT, the authors' Google Drive links from github.com/sehunfromdaegu/ECG_JEPA)
+jepa="$(dirname "$0")/../../../models/ecg_jepa-pretrained"
+mkdir -p "$jepa"
+[ -f "$jepa/multiblock_epoch100.pth" ] || uv run --with gdown python -m gdown 1gMOT4xjQQg0GZkY1iE6NuDzua4ALw00l -O "$jepa/"
+[ -f "$jepa/random_epoch100.pth" ] || uv run --with gdown python -m gdown 1mh-XL0XOvvhFbhvuZ9c2KnTHa9B4F3Wx -O "$jepa/"

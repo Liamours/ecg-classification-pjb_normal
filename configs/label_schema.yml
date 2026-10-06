@@ -3,6 +3,7 @@ detailed_column: diagnosis_labels_detailed   # JSON list per page in the manifes
 normal_label: NORMAL
 min_pages: 10          # defects or groups with fewer pages than this are listed but not scored
 shuffles: 50           # label shuffles for the chance level of the best output (seed 42)
+out: '@analyses/label_schema/label_schema.csv'
 runs:                  # model run folders under @inferences holding <dataset>/predictions.csv
   - classify_signal-ecgfounder
   - classify_signal-ecgfounder_tile

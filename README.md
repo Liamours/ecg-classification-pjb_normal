@@ -59,3 +59,12 @@ uv run python -m src.classify_signal --config configs/classify_signal_merl_res18
 ```
 uv run python -m src.label_schema --config configs/label_schema.yml
 ```
+
+## Linear probe on encoders without a label head
+
+`src.probe` embeds every digitized page with a frozen encoder (`ecg_jepa`: ECG-JEPA, 8 leads, 10 s at 250 Hz, raw mV), then fits an L2 logistic regression on the standardized embeddings for PJB vs NORMAL and for every defect and ACC-CHD group against NORMAL. Folds hold out one collection batch at a time. Saved per dataset: `embeddings.npz`, `probe_scores.csv` (out-of-fold score per page on the labeled set; on other sets the score of a probe fit on all labeled pages) and `probe_auroc.csv`.
+
+```
+uv run python -m src.probe --config configs/probe_ecg_jepa.yml
+uv run python -m src.probe --config configs/probe_ecg_jepa_random.yml
+```
