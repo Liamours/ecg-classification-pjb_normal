@@ -1,0 +1,46 @@
+dataset: mac400-phone_photo
+detailed_column: diagnosis_labels_detailed   # JSON list per page in the manifest
+normal_label: NORMAL
+min_pages: 10          # defects or groups with fewer pages than this are listed but not scored
+shuffles: 50           # label shuffles for the chance level of the best output (seed 42)
+runs:                  # model run folders under @inferences holding <dataset>/predictions.csv
+  - classify_signal-ecgfounder
+  - classify_signal-ecgfounder_tile
+  - classify_signal-hubert_ecg
+  - classify_signal-hubert_ecg_tile
+groups:                # ACC-CHD (Houyel et al. 2011, IPCCC-based) group of each detailed label; other = not a structural defect
+  NORMAL: normal
+  PLSVC: 2 venous return
+  PAPVD: 2 venous return
+  TAPVD: 2 venous return
+  ASD: 3 atria and interatrial communications
+  MULTIPLE ASD: 3 atria and interatrial communications
+  AVSD: 4 atrioventricular junctions and valves
+  AVSD INCOMPLETE: 4 atrioventricular junctions and valves
+  CAVSD: 4 atrioventricular junctions and valves
+  SINGLE ATRIUM: 4 atrioventricular junctions and valves
+  EBSTEIN ANOMALY: 4 atrioventricular junctions and valves
+  PARACHUTE MITRAL VALVE: 4 atrioventricular junctions and valves
+  CCTGA: 5 complex atrioventricular connections
+  ATRESIA TRICUSPID: 6 functionally univentricular hearts
+  SINGLE VENTRICLE: 6 functionally univentricular hearts
+  VSD: 7 ventricular septal defects
+  TGA: 8 ventricular outflow tracts
+  DORV: 8 ventricular outflow tracts
+  TOF: 8 ventricular outflow tracts
+  EXTREME TOF: 8 ventricular outflow tracts
+  PENTALOGY OF FALLOT: 8 ventricular outflow tracts
+  PA-VSD: 8 ventricular outflow tracts
+  PS: 8 ventricular outflow tracts
+  CRITICAL PS: 8 ventricular outflow tracts
+  PA: 8 ventricular outflow tracts
+  AS: 8 ventricular outflow tracts
+  TRUNCUS: 8 ventricular outflow tracts
+  PDA: 9 extrapericardial arterial trunks
+  LARGE PDA: 9 extrapericardial arterial trunks
+  COA: 9 extrapericardial arterial trunks
+  INTERRUPTED AORTIC ARCH: 9 extrapericardial arterial trunks
+  SINGLE LPA: 9 extrapericardial arterial trunks   # placement not stated in the paper text
+  PFO: other
+  PH: other
+  TAVB: other

@@ -5,6 +5,9 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy",
     "pyyaml",
+    "safetensors>=0.8.0",
+    "scipy>=1.15.3",
     "tqdm",
+    "transformers>=5.18.0",
     "ultralytics>=8.4.123",
 ]
