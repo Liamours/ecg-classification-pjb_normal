@@ -164,11 +164,10 @@ class ECGFM:
         self.net = build_model_from_checkpoint(checkpoint_path=str(paths.resolve(self.cfg["weights"]))).to(device).eval()
 
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
-        out = self.net(source=batch)
-        if self.embedding:
-            x = out["encoder_out"]
+        if self.embedding:  # the parent class's forward: the classifier's own returns encoder_out detached, which would stop fine-tuning gradients
+            x = super(type(self.net), self.net).forward(source=batch)["x"]
             return torch.div(x.sum(dim=1), (x != 0).sum(dim=1))  # infer_quickstart.ipynb encoder_out_to_emb
-        return torch.sigmoid(out["out"])
+        return torch.sigmoid(self.net(source=batch)["out"])
 
 
 class MERL:

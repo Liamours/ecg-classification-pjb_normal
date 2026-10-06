@@ -81,3 +81,11 @@ uv run python -m src.probe --config configs/probe/ecg_jepa_random.yml
 ```
 .\scripts\run_linear_probe.ps1
 ```
+
+## Fine-tuning
+
+`scripts/run_finetune.ps1` runs `src.finetune` (`configs/finetune.yml`) in PowerShell: per model (ECGFounder, ECG-JEPA, ECG-FM), repeat and outer fold of `manifest_folds.csv`, a new linear output layer on the model's embedding and the whole network trained on the train pages (AdamW, backbone 1e-5 and head 1e-4, BCE with per-label positive weights, mixed precision, amplitude, noise and shift augmentation), the epoch with the best validation micro F1 kept, one threshold per level chosen on validation with a diagnosis kept only when its group is predicted (`src.thresholds`), the test fold scored once; then one network per model trained on every labeled page scores the scans and is kept (`final.pt`). Output in `results/inferences/finetune/<model>/` and `results/analyses/finetune/` (F1 by level). One progress line with ETA over units plus an epoch line, a log in `logs/`, a checkpoint after every epoch so a stopped fold continues where it was.
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\run_finetune.ps1
+```

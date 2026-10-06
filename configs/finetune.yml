@@ -1,0 +1,32 @@
+dataset: mac400-phone_photo         # labeled set, trained and tested with the nested folds
+predict: {mac400-scan: '@inferences/canonical_mac400-scan'}   # unlabeled sets scored by the model trained on every labeled page
+run: '@inferences/canonical_mac400-phone_photo'               # digitized records of the labeled set
+label_column: diagnosis_label
+detailed_column: diagnosis_labels_detailed
+groups_config: configs/label_schema.yml
+unknown_label: diagnosis unknown
+merge:
+  AVSD INCOMPLETE: AVSD
+  CAVSD: AVSD
+  EXTREME TOF: TOF
+  PENTALOGY OF FALLOT: TOF
+  CRITICAL PS: PS
+  LARGE PDA: PDA
+  MULTIPLE ASD: ASD
+folds: '@mac400-phone_photo/_labels/manifest_folds.csv'
+models:                             # name: the src.infer config whose adapter, weights and preprocessing are fine-tuned (embedding output)
+  ecgfounder: {config: configs/infer/ecgfounder_tile_emb.yml, batch_size: 32, frozen: [dense.]}   # its 150-label output layer is not used
+  ecg_jepa: {config: configs/infer/ecg_jepa_random.yml, batch_size: 8, frozen: []}         # batch 16 peaks at 6.27 GiB on the 6 GiB card and runs 4.5 times slower; batch 8 peaks at 3.88 GiB
+  ecg_fm: {config: configs/infer/ecg_fm_emb.yml, batch_size: 16, frozen: [proj.]}             # its 17-label output layer is not used
+lr: {backbone: 1.0e-5, head: 1.0e-4}   # differential learning rate for a pretrained backbone (coding.md default)
+weight_decay: 0.01                  # AdamW default in PyTorch, not tuned
+max_epochs: 30
+patience: 5                         # epochs without a better validation micro F1 before stopping
+pos_weight_max: 50                  # cap of the per-label positive weight (negatives / positives on train) in the BCE loss
+augment: {amplitude: 0.1, noise: 0.02, shift: 0.1}   # per training sample: lead amplitude scaled by 1 +- 0.1, Gaussian noise at 0.02 of the signal SD, circular time shift up to 10 percent
+workers: 4                          # data-loader processes for the one-time input preparation
+keep_fold_checkpoints: false        # fold checkpoints are deleted once the fold's predictions are saved; the final models are kept
+seed: 42
+out_dir: '@inferences/finetune'
+report_dir: '@analyses/finetune'
+log_dir: '@logs'
