@@ -1,0 +1,40 @@
+model: '@inferences/finetune_single/model.pt'   # the final ECGFounder model (wiki/TODO-classification.md, C5); weights, labels, thresholds, training config
+dataset: mac400-phone_photo
+run: '@inferences/canonical_mac400-phone_photo'   # digitized records of the dataset (record.csv per page)
+inputs: '@inferences/finetune_single/inputs-mac400-phone_photo.npz'   # the same pages prepared for the model (cache of src.finetune.prepare)
+split: {repeat: 1, fold: 1}         # the model's test pages: every dataset-level result uses only these
+methods:                            # attribution methods, all from Captum 0.9 except occlusion (own, in record space)
+  saliency: {}                      # absolute input gradient (Simonyan et al. 2014)
+  input_x_gradient: {}              # gradient times input (Shrikumar et al. 2016)
+  integrated_gradients: {steps: 50} # path integral from the all-zero input, Captum default step count (Sundararajan et al. 2017)
+  smoothgrad: {samples: 25, noise: 0.15}   # mean gradient over noisy copies, noise SD as a fraction of the input range, 10 to 20 percent in Smilkov et al. 2017
+  gradient_shap: {samples: 25, noise: 0.15}   # expected gradients from noisy all-zero baselines (Lundberg and Lee 2017)
+  deeplift: {}                      # DeepLIFT rescale rule against the all-zero input (Shrikumar et al. 2017)
+  grad_cam: {layer: stage_list.6}   # Grad-CAM on the last convolution stage of Net1D, upsampled to the input length (Selvaraju et al. 2017)
+  occlusion: {window_s: 0.2}        # drop of the target probability when a 0.2 s stretch of one lead is set to the all-zero input
+baselines:                          # what a removed sample becomes, for Integrated Gradients, GradientSHAP, DeepLIFT, occlusion, deletion and insertion; every method runs once per baseline
+  zero: {}                          # the all-zero input; this model gives it a high CHD probability (0.835 for the explained group on the first test page, against 0.287 for the page)
+  blur: {sigma_s: 0.1}              # the input smoothed by a Gaussian of 0.1 s SD, which removes QRS detail and keeps the slow baseline (blurred baseline, Sturmfels et al. 2020)
+fs: 500
+faithfulness: {fractions: [0.0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0], seed: 42}   # deletion and insertion curves (Petsiuk et al. 2018): share of digitized samples removed or inserted, most attributed first; seed of the random-order reference
+lead_map: {method: integrated_gradients, min_pages: 3}   # share of attribution per lead for each true label of each test page, labels with at least 3 test pages
+pages:                              # example test pages shown on the photo: label of the example, relative path in the dataset
+  correct NORMAL: NORMAL 20.12.2024/NORMAL (4).jpg
+  correct NORMAL, Tambahan batch: NORMAL Tambahan/CamScanner 13-11-2024 00.00_66.jpg
+  NORMAL called PJB: NORMAL Tambahan/CamScanner 13-11-2024 00.00_40.jpg
+  PJB called NORMAL: PJB/VSD (13).jpg
+  PDA found: PJB/PDA 30.jpg
+  ASD and PS found: PJB 19.12.2024/ASD, PS (2).jpg
+  VSD found: PJB/VSD 31.jpg
+  TOF found: PJB 19.12.2024/TOF (20).jpg
+digitizer:                          # re-digitizes the example pages with every per-panel file kept, for the map from samples to photo pixels
+  repo: ../ecg-digitization-synthetic_realistic
+  python: ../../.venvs/digitize_gpu/Scripts/python.exe
+  config: configs/digitize.yml
+  layout: mac400_phone              # the layout of the canonical run
+  device: cpu
+viewer_side: 1400                   # px, long side of the photos embedded in the viewer
+batch_size: 32
+out_dir: '@inferences/xai'
+report_dir: '@analyses/xai'
+log_dir: '@logs'

@@ -1,0 +1,211 @@
+<title>ECGFounder XAI Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+/* Layout: controls on top; photo with coloured trace beside the 12 leads and the per-lead drop; test-page results below */
+:root {
+  --bg: #f7f7f6;
+  --panel: #ffffff;
+  --fg: #1f2226;
+  --muted: #6a7078;
+  --line: #dcdfe3;
+  --pos: #b8432c;
+  --neg: #2d6194;
+  --neutral: #a3a8ae;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #151719; --panel: #1d2023; --fg: #e5e7ea; --muted: #9aa1a9; --line: #33383e; --pos: #e07a62; --neg: #6fa3d6; --neutral: #5d636a; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #151719; --panel: #1d2023; --fg: #e5e7ea; --muted: #9aa1a9; --line: #33383e; --pos: #e07a62; --neg: #6fa3d6; --neutral: #5d636a; color-scheme: dark; }
+
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 14px; line-height: 1.45; }
+.wrap { max-width: 1380px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 40px; display: grid; gap: 22px; }
+h1 { font-size: 20px; margin: 0; font-weight: 600; text-wrap: balance; }
+h2 { font-size: 16px; margin: 0; font-weight: 600; }
+h3 { font-size: 13px; margin: 0 0 6px; font-weight: 600; color: var(--muted); }
+.controls { display: grid; gap: 10px; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.row > .lab { font-size: 12px; color: var(--muted); min-width: 64px; }
+button { font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 4px; cursor: pointer; }
+button[aria-pressed="true"] { border-color: var(--fg); font-weight: 600; }
+button:focus-visible { outline: 2px solid var(--neg); outline-offset: 1px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; }
+.facts div { min-width: 0; }
+.facts .k { font-size: 12px; color: var(--muted); }
+.facts .v { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+.main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 900px) { .main { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; min-width: 0; }
+canvas { display: block; width: 100%; }
+.scale { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.bar { width: 160px; height: 8px; border-radius: 2px; background: linear-gradient(90deg, var(--neg), var(--neutral), var(--pos)); }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+svg text { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { padding: 4px 8px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; }
+tr.sel td { font-weight: 600; }
+td.cell { font-family: var(--mono); font-size: 12px; min-width: 44px; }
+p.note { margin: 0; color: var(--muted); max-width: 75ch; }
+</style>
+
+<div class="wrap">
+  <h1>ECGFounder XAI Viewer</h1>
+  <div class="controls">
+    <div class="row" id="pagebtns"><span class="lab">Page</span></div>
+    <div class="row" id="methodbtns"><span class="lab">Method</span></div>
+    <div class="row" id="basebtns"><span class="lab">Baseline</span></div>
+  </div>
+  <div class="facts" id="facts"></div>
+  <div class="scale"><span id="against">against</span><span class="bar"></span><span id="toward">toward</span></div>
+  <div class="main">
+    <div class="card"><h3>Photo, digitized trace coloured by attribution</h3><canvas id="photo"></canvas></div>
+    <div style="display:grid;gap:16px;min-width:0">
+      <div class="card"><h3>Digitized leads</h3><canvas id="leads"></canvas></div>
+      <div class="card"><h3>Drop in probability when the whole lead is zeroed</h3><svg id="drop" viewBox="0 0 520 250"></svg></div>
+    </div>
+  </div>
+  <h2 id="testhead">Test pages</h2>
+  <p class="note">Deletion replaces the most attributed digitized samples by the baseline first; a faithful method makes the probability fall fast (low area). Insertion restores them onto the baseline; a faithful method makes it rise fast (high area). Areas are divided by the page's original probability and averaged over pages.</p>
+  <div class="charts">
+    <div class="card"><h3>Deletion</h3><svg id="del" viewBox="0 0 420 260"></svg></div>
+    <div class="card"><h3>Insertion</h3><svg id="ins" viewBox="0 0 420 260"></svg></div>
+    <div class="card tablewrap"><h3>Area under the curve</h3><table id="auc"></table></div>
+  </div>
+  <div class="card tablewrap"><h3>Share of Integrated Gradients attribution per lead, per true label (mean over its test pages)</h3><table id="leadmap"></table></div>
+</div>
+
+<script>
+const D = __DATA__;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const hex = h => { const v = h.replace("#", ""); return [0, 2, 4].map(i => parseInt(v.slice(i, i + 2), 16)); };
+const mix = (a, b, t) => a.map((x, i) => Math.round(x + (b[i] - x) * t));
+let page = 0, kind = D.baselines.includes("blur") ? "blur" : D.baselines[0], method = D.methods.includes("integrated_gradients") ? "integrated_gradients" : D.methods[0];
+const NS = "http://www.w3.org/2000/svg";
+function el(p, tag, a, txt) { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt !== undefined) e.textContent = txt; p.appendChild(e); return e; }
+function colour(v) {
+  const n = hex(css("--neutral")), p = hex(css("--pos")), q = hex(css("--neg"));
+  if (v === null || v === undefined) return `rgb(${n})`;
+  return `rgb(${v >= 0 ? mix(n, p, Math.min(1, v)) : mix(n, q, Math.min(1, -v))})`;
+}
+function buttons() {
+  const pb = document.getElementById("pagebtns"), mb = document.getElementById("methodbtns");
+  D.pages.forEach((p, i) => { const b = document.createElement("button"); b.id = "page" + i; b.textContent = p.name; b.onclick = () => { page = i; render(); }; pb.appendChild(b); });
+  D.methods.forEach(m => { const b = document.createElement("button"); b.id = "m-" + m; b.textContent = D.names[m]; b.onclick = () => { method = m; render(); }; mb.appendChild(b); });
+  const bb = document.getElementById("basebtns"), bn = { zero: "All-zero input", blur: "Blurred input" };
+  D.baselines.forEach(k => { const b = document.createElement("button"); b.id = "b-" + k; b.textContent = bn[k] || k; b.onclick = () => { kind = k; render(); }; bb.appendChild(b); });
+}
+function facts() {
+  const p = D.pages[page];
+  const items = [["File", p.file], ["True labels", p.truth.join(", ") || "-"], ["Predicted labels", p.pred.join(", ") || "none (NORMAL)"],
+    ["Explained output", `${p.target} (${p.target_prob.toFixed(4)})`], ["Baseline probability of that output", p.by_baseline[kind].base_prob.toFixed(4)], ["Highest outputs", p.top.slice(0, 4).map(t => `${t[0].replace(/^(group|diagnosis): /, "")} ${t[1].toFixed(2)}`).join(", ")]];
+  document.getElementById("facts").innerHTML = items.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  document.getElementById("toward").textContent = "toward " + p.target.replace(/^group: /, "");
+  document.getElementById("against").textContent = "against";
+}
+const img = new Image();
+function photo() {
+  const p = D.pages[page], c = document.getElementById("photo"), dpr = window.devicePixelRatio || 1;
+  const draw = () => {
+    const w = c.clientWidth, s = w / img.naturalWidth, h = img.naturalHeight * s;
+    c.width = w * dpr; c.height = h * dpr; c.style.height = h + "px";
+    const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.drawImage(img, 0, 0, w, h);
+    g.fillStyle = "rgba(255,255,255,0.45)"; g.fillRect(0, 0, w, h);
+    g.lineWidth = 2.2; g.lineCap = "round";
+    D.leads.forEach((lead, li) => {
+      const t = p.traces[lead]; if (!t) return;
+      const a = p.by_baseline[kind].attr[method][li];
+      for (let k = 1; k < t.bin.length; k++) {
+        g.strokeStyle = colour(a[t.bin[k]]);
+        g.beginPath(); g.moveTo(t.xy[2 * k - 2] * s, t.xy[2 * k - 1] * s); g.lineTo(t.xy[2 * k] * s, t.xy[2 * k + 1] * s); g.stroke();
+      }
+    });
+  };
+  if (img.src !== p.photo) { img.onload = draw; img.src = p.photo; } else draw();
+}
+function leads() {
+  const p = D.pages[page], c = document.getElementById("leads"), dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, rows = 6, rh = 54, h = rows * rh + 18;
+  c.width = w * dpr; c.height = h * dpr; c.style.height = h + "px";
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  const cw = (w - 12) / 2, n = p.record[0].length, dur = n / D.fs;
+  g.font = "11px " + css("--mono");
+  D.leads.forEach((lead, li) => {
+    const col = li < 6 ? 0 : 1, row = li % 6, x0 = col * (cw + 12), y0 = row * rh;
+    const v = p.record[li].filter(x => x !== null);
+    g.fillStyle = css("--muted"); g.fillText(lead, x0, y0 + 12);
+    if (!v.length) { g.fillText("no data", x0 + 34, y0 + 12); return; }
+    const lo = Math.min(...v), hi = Math.max(...v), mid = (lo + hi) / 2, span = Math.max(hi - lo, 0.5);
+    const X = i => x0 + 30 + (i / n) * (cw - 30), Y = mv => y0 + rh / 2 - ((mv - mid) / span) * (rh - 12);
+    g.lineWidth = 1.6;
+    const a = p.by_baseline[kind].attr[method][li];
+    for (let i = 1; i < n; i++) {
+      if (p.record[li][i] === null || p.record[li][i - 1] === null) continue;
+      g.strokeStyle = colour(a[Math.floor(i / D.fs / D.bin_s)]);
+      g.beginPath(); g.moveTo(X(i - 1), Y(p.record[li][i - 1])); g.lineTo(X(i), Y(p.record[li][i])); g.stroke();
+    }
+  });
+  g.fillStyle = css("--muted");
+  for (let col = 0; col < 2; col++) for (let s = 0; s <= Math.floor(dur); s++) g.fillText(s + " s", col * (cw + 12) + 30 + (s / dur) * (cw - 30) - 6, h - 3);
+}
+function drop() {
+  const p = D.pages[page], svg = document.getElementById("drop"); svg.innerHTML = "";
+  const ld = p.by_baseline[kind].lead_drop, vals = ld.map(v => v ?? 0), m = Math.max(0.01, ...vals.map(Math.abs));
+  const L = 260, half = 200, rh = 19;
+  el(svg, "line", { x1: L, x2: L, y1: 4, y2: 12 * rh + 4, stroke: css("--line"), fill: "none" });
+  D.leads.forEach((lead, i) => {
+    const v = ld[i], y = 6 + i * rh;
+    el(svg, "text", { x: 10, y: y + 12 }, lead);
+    if (v === null) { el(svg, "text", { x: L + 6, y: y + 12 }, "no data"); return; }
+    const wdt = Math.abs(v) / m * half;
+    el(svg, "rect", { x: v >= 0 ? L : L - wdt, y: y + 2, width: Math.max(wdt, 1), height: rh - 6, fill: v >= 0 ? css("--pos") : css("--neg") });
+    el(svg, "text", { x: v >= 0 ? L - 8 : L + 8, y: y + 12, "text-anchor": v >= 0 ? "end" : "start" }, (v >= 0 ? "+" : "") + v.toFixed(3));
+  });
+  el(svg, "text", { x: L, y: 12 * rh + 20, "text-anchor": "middle" }, "probability drop");
+}
+function curve(id, key) {
+  const svg = document.getElementById(id); svg.innerHTML = "";
+  const T = D.test[kind], fr = T.fractions, L = 44, R = 404, top = 10, B = 222;
+  const all = Object.values(T[key]).flat(), ymax = Math.max(0.1, ...all) * 1.05;
+  const X = f => L + f * (R - L), Y = v => B - (v / ymax) * (B - top);
+  for (let i = 0; i <= 4; i++) { const v = ymax * i / 4; el(svg, "line", { x1: L, x2: R, y1: Y(v), y2: Y(v), stroke: css("--line"), fill: "none" }); el(svg, "text", { x: L - 6, y: Y(v) + 4, "text-anchor": "end" }, v.toFixed(2)); }
+  [0, 0.2, 0.4, 0.6, 0.8, 1].forEach(f => el(svg, "text", { x: X(f), y: B + 16, "text-anchor": "middle" }, f.toFixed(1)));
+  el(svg, "text", { x: (L + R) / 2, y: B + 32, "text-anchor": "middle" }, "share of digitized samples");
+  const order = Object.keys(T[key]).sort((a, b) => (a === method) - (b === method));
+  order.forEach(m => {
+    const sel = m === method, rnd = m === "random";
+    el(svg, "polyline", { points: fr.map((f, i) => X(f) + "," + Y(T[key][m][i])).join(" "), fill: "none", stroke: sel ? css("--fg") : (rnd ? css("--muted") : css("--neutral")),
+      "stroke-width": sel ? 2.4 : 1.1, "stroke-dasharray": rnd ? "4 4" : "none", opacity: sel || rnd ? 1 : 0.7 });
+  });
+  const last = fr.length - 1;
+  el(svg, "text", { x: R, y: Y(T[key][method][key === "deletion" ? 1 : last]) - 6, "text-anchor": "end", style: `fill:${css("--fg")}` }, D.names[method]);
+}
+function auc() {
+  const t = document.getElementById("auc");
+  const rows = D.test[kind].auc.slice().sort((a, b) => a.deletion_auc - b.deletion_auc);
+  t.innerHTML = "<tr><th>Method</th><th>Deletion (lower is better)</th><th>Insertion (higher is better)</th></tr>" +
+    rows.map(r => `<tr class="${r.method === method ? "sel" : ""}"><td>${D.names[r.method]}</td><td>${(+r.deletion_auc).toFixed(4)}</td><td>${(+r.insertion_auc).toFixed(4)}</td></tr>`).join("");
+}
+function leadmap() {
+  const t = document.getElementById("leadmap"), rows = D.test[kind].lead_map;
+  const mx = Math.max(...rows.flatMap(r => D.leads.map(l => +r[l])));
+  const p = hex(css("--pos"));
+  t.innerHTML = "<tr><th>Label</th><th>Pages</th>" + D.leads.map(l => `<th>${l}</th>`).join("") + "</tr>" +
+    rows.map(r => `<tr><td>${r.label}</td><td>${r.pages}</td>` + D.leads.map(l => `<td class="cell" style="background:rgba(${p},${(+r[l] / mx * 0.85).toFixed(2)})">${(+r[l]).toFixed(3)}</td>`).join("") + "</tr>").join("");
+}
+function render() {
+  D.pages.forEach((_, i) => document.getElementById("page" + i).setAttribute("aria-pressed", i === page));
+  D.methods.forEach(m => document.getElementById("m-" + m).setAttribute("aria-pressed", m === method));
+  D.baselines.forEach(k => document.getElementById("b-" + k).setAttribute("aria-pressed", k === kind));
+  document.getElementById("testhead").textContent = `Test pages (${D.test[kind].pages})`;
+  facts(); photo(); leads(); drop(); curve("del", "deletion"); curve("ins", "insertion"); auc(); leadmap();
+}
+buttons(); render();
+let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(render, 150); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+</script>

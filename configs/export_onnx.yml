@@ -1,0 +1,12 @@
+checkpoint: '@inferences/finetune_single/model.pt'   # src.finetune output: backbone.* (Net1D) and head.* weights, labels, thresholds
+train_config: configs/finetune_single.yml   # its folds, split and label groups (calibration pages, parity readout)
+out_dir: '@models/ecgfounder-finetune_single-onnx'
+opset: 18   # the lowest the torch.export-based exporter writes
+android_ort_version: 1.30.0   # com.microsoft.onnxruntime:onnxruntime-android of the app; .ort files are written with this version
+inputs: {mac400-phone_photo: '@inferences/finetune_single/inputs-mac400-phone_photo.npz'}   # prepared model inputs (ECGFounderPrep tile)
+calibration_pages: 100   # training pages of the model's split
+parity:   # prepared inputs and the PyTorch model's probabilities for the same pages
+  test: ['@inferences/finetune_single/inputs-mac400-phone_photo.npz', '@inferences/finetune_single/test_predictions.csv']
+  mac400-scan: ['@inferences/finetune_single/inputs-mac400-scan.npz', '@inferences/finetune_single/mac400-scan_predictions.csv']
+seed: 42
+threads: 4   # ONNX Runtime and PyTorch: half the laptop's logical cores (wiki/overview/hardware.md)
