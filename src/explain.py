@@ -110,6 +110,19 @@ def occlude(score, x: np.ndarray, base: np.ndarray, idx: list[np.ndarray], targe
     return blocks, lead_drop, windows
 
 
+def lead_drops(score, rec: np.ndarray, cfg: dict) -> np.ndarray:
+    """Whole-lead drop of every output (leads x outputs, NaN for a lead with no data): one run with each lead replaced by its
+    blurred baseline, against the page's own probabilities."""
+    x = ECGFounderPrep("tile")(rec)
+    base = blur(x, cfg["sigma_s"], cfg["fs"])
+    has = np.isfinite(rec).any(axis=1)
+    xs = [x] + [np.where(np.arange(len(x))[:, None] == l, base, x) for l in np.flatnonzero(has)]
+    p = score(np.stack(xs).astype(np.float32))
+    out = np.full((len(x), p.shape[1]), np.nan)
+    out[has] = p[0] - p[1:]
+    return out
+
+
 def explain(score, rec: np.ndarray, groups: np.ndarray, cfg: dict) -> dict:
     """Probabilities, the explained output, block attribution and whole-lead drops for one record (12 x record samples, mV)."""
     x = ECGFounderPrep("tile")(rec)

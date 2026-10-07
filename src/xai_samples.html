@@ -41,6 +41,12 @@ svg text.top { fill: var(--fg); font-weight: 600; }
 rect.box { fill: var(--panel); stroke: var(--line); stroke-width: 1; }
 rect.lead { fill: var(--lead); }
 rect.block { fill: var(--block); }
+p.note { margin: 0; color: var(--muted); max-width: 80ch; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { padding: 4px 7px; text-align: center; border-bottom: 1px solid var(--line); white-space: nowrap; font-family: var(--mono); font-size: 12px; }
+th { font-family: var(--sans); font-weight: 600; color: var(--muted); }
+td:first-child, th:first-child { text-align: left; font-family: var(--sans); font-size: 13px; }
 polyline { fill: none; stroke: var(--trace); stroke-width: 1.2; stroke-linejoin: round; }
 </style>
 
@@ -51,4 +57,9 @@ polyline { fill: none; stroke: var(--trace); stroke-width: 1.2; stroke-linejoin:
     <span class="key"><span class="sw" style="background:var(--lead)"></span>the __TOP__ leads whose removal lowers it most</span>
   </div>
   __CARDS__
+  <section class="card">
+    <h2>Leads each diagnosis needs</h2>
+    <p class="note">On every labeled page, each lead was replaced in turn and the drop of each diagnosis' output recorded. A value is the rank-biserial correlation where removing that lead lowers the output more on pages with the diagnosis than on NORMAL pages (Mann-Whitney test, Benjamini-Hochberg q &lt; 0.05 over all diagnoses and leads); empty cells are not significant. Outlined cells are the leads where the textbook ECG sign of the defect shows.</p>
+    <div class="tablewrap">__LEADTABLE__</div>
+  </section>
 </div>

@@ -21,6 +21,24 @@ from src.xai_viewer import read_csv
 REPO = Path(__file__).resolve().parents[1]
 
 
+def lead_table(report: Path, expected: dict) -> str:
+    """Per diagnosis (`src.xai_leads`): rank-biserial of each lead that removing lowers the output more than on NORMAL pages,
+    tinted by size; textbook leads outlined."""
+    stats, summary = read_csv(report / "lead_stats.csv"), read_csv(report / "lead_summary.csv")
+    cell = {(r["diagnosis"], r["lead"]): r for r in stats}
+    head = "<tr><th>Diagnosis</th><th>Pages</th>" + "".join(f"<th>{l}</th>" for l in LEADS) + "<th>Textbook leads</th><th>Found</th></tr>"
+    rows = []
+    for s in summary:
+        tds = []
+        for l in LEADS:
+            r = cell[(s["diagnosis"], l)]
+            v, sig, exp = float(r["rank_biserial"]), r["significant"] == "1", l in expected[s["diagnosis"]]
+            style = (f"background:color-mix(in srgb, var(--lead) {min(100, v * 120):.0f}%, transparent);" if sig else "") + ("outline:1.5px solid var(--fg);outline-offset:-2px;" if exp else "")
+            tds.append(f'<td style="{style}">{f"{v:+.2f}" if sig else ""}</td>')
+        rows.append(f"<tr><td>{s['diagnosis']}</td><td>{s['pages']}</td>{''.join(tds)}<td>{s['expected_leads']}</td><td>{s['expected_found']}</td></tr>")
+    return f"<table>{head}{''.join(rows)}</table>"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", type=Path, required=True)
@@ -49,6 +67,7 @@ def main() -> None:
 <div><dt>Most influential leads (probability drop when replaced)</dt><dd>{", ".join(f"{LEADS[i]} {drop[i]:.3f}" for i in order)}</dd></div></dl>
 <div class="svgwrap">{render(z["record"], z["attr_occlusion"], drop, order, sm["levels"], sm["percentile"])}</div></section>''')
     html = (REPO / "src" / "xai_samples.html").read_text(encoding="utf-8").replace("__TOP__", str(sm["top_leads"])).replace("__CARDS__", "\n".join(cards))
+    html = html.replace("__LEADTABLE__", lead_table(paths.resolve(cfg["report_dir"]) / cfg["label_stats"]["baseline"], cfg["label_stats"]["expected"]))
     dest = paths.resolve(cfg["report_dir"]) / "xai_samples.html"
     dest.write_text(html, encoding="utf-8")
     print(f"{dest}: {len(html) / 1e3:.0f} kB")
