@@ -139,6 +139,16 @@ def top_leads(lead_drop: np.ndarray, k: int) -> list[int]:
     return [int(i) for i in np.argsort(-np.nan_to_num(lead_drop, nan=-np.inf))[:k] if lead_drop[i] > 0]
 
 
+def describe(e: dict, labels: list[str], thresholds: dict, parent: np.ndarray, cfg: dict) -> dict:
+    """The explanation of one record as the JSON `explanation.json` holds: predicted labels, explained output, whole-lead drops, top leads and blocks."""
+    top = top_leads(e["lead_drop"], cfg["top_leads"])
+    pred = predict(e["prob"][None], thresholds, parent)[0]
+    blocks = [{"lead": LEADS[l], "start_s": round(a / cfg["fs"], 3), "end_s": round(b / cfg["fs"], 3), "drop": round(d, 4)} for l, a, b, d in e["windows"] if d > 0]
+    return {"predicted": [labels[j] for j in np.flatnonzero(pred)] or ["NORMAL"], "explained_output": labels[e["target"]],
+            "probability": round(float(e["prob"][e["target"]]), 4), "lead_drop": {LEADS[i]: None if not np.isfinite(d) else round(float(d), 4) for i, d in enumerate(e["lead_drop"])},
+            "top_leads": [LEADS[i] for i in top], "blocks": blocks}
+
+
 def runs(values: np.ndarray) -> list[tuple[int, int, int]]:
     """Consecutive stretches of one value: (start, end, value)."""
     out, s = [], 0
@@ -204,13 +214,9 @@ def main() -> None:
         rec = np.genfromtxt(page / "record.csv", delimiter=",", skip_header=1)[:, 1:].T
         e = explain(score, rec, groups, cfg)
         top = top_leads(e["lead_drop"], cfg["top_leads"])
-        pred = predict(e["prob"][None], thresholds, parent)[0]
         out = out_root / page.name
         out.mkdir(parents=True, exist_ok=True)
-        blocks = [{"lead": LEADS[l], "start_s": round(a / cfg["fs"], 3), "end_s": round(b / cfg["fs"], 3), "drop": round(d, 4)} for l, a, b, d in e["windows"] if d > 0]
-        result = {"predicted": [labels[j] for j in np.flatnonzero(pred)] or ["NORMAL"], "explained_output": labels[e["target"]],
-                  "probability": round(float(e["prob"][e["target"]]), 4), "lead_drop": {LEADS[i]: None if not np.isfinite(d) else round(float(d), 4) for i, d in enumerate(e["lead_drop"])},
-                  "top_leads": [LEADS[i] for i in top], "blocks": blocks}
+        result = describe(e, labels, thresholds, parent, cfg)
         (out / "explanation.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
         svg = render(rec, e["blocks"], e["lead_drop"], top, cfg["levels"], cfg["percentile"])
         (out / "explanation.svg").write_text(svg.replace("<svg ", '<svg xmlns="http://www.w3.org/2000/svg" ', 1).replace(">", ">" + STYLE, 1), encoding="utf-8")

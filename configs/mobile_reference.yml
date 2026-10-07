@@ -1,0 +1,5 @@
+explain: configs/explain.yml   # the phone classifier file and the explanation settings
+train_config: configs/finetune_single.yml   # label groups, merged variants and the unknown label of the labels
+labels: '@models/ecgfounder-finetune_single-onnx/labels.json'   # output names in order and the two thresholds
+reference: '@inferences/mobile_reference'   # run folder of ecg-digitization-synthetic_realistic src.digitize.reference
+min_free_gb: 1.5
