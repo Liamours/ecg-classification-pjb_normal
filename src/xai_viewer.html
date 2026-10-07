@@ -69,6 +69,10 @@ p.note { margin: 0; color: var(--muted); max-width: 75ch; }
       <div class="card"><h3>Drop in probability when the whole lead is zeroed</h3><svg id="drop" viewBox="0 0 520 250"></svg></div>
     </div>
   </div>
+  <h2 id="labelhead">Per diagnosis</h2>
+  <p class="note" id="labelnote"></p>
+  <div class="card tablewrap"><h3>Rank-biserial correlation against NORMAL pages, significant cells only (outlined: textbook leads of the defect)</h3><table id="labelmap"></table></div>
+  <div class="card tablewrap"><h3>Summary</h3><table id="labelsum"></table></div>
   <h2 id="testhead">Test pages</h2>
   <p class="note">Deletion replaces the most attributed digitized samples by the baseline first; a faithful method makes the probability fall fast (low area). Insertion restores them onto the baseline; a faithful method makes it rise fast (high area). Areas are divided by the page's original probability and averaged over pages.</p>
   <div class="charts">
@@ -198,12 +202,34 @@ function leadmap() {
   t.innerHTML = "<tr><th>Label</th><th>Pages</th>" + D.leads.map(l => `<th>${l}</th>`).join("") + "</tr>" +
     rows.map(r => `<tr><td>${r.label}</td><td>${r.pages}</td>` + D.leads.map(l => `<td class="cell" style="background:rgba(${p},${(+r[l] / mx * 0.85).toFixed(2)})">${(+r[l]).toFixed(3)}</td>`).join("") + "</tr>").join("");
 }
+function bylabel() {
+  const B = D.by_label, p = hex(css("--pos")), q = hex(css("--neg"));
+  const n = B.summary.length ? B.summary[0].normal_pages : 0;
+  document.getElementById("labelnote").textContent = `${B.method} with the blurred baseline on every labeled page: the share of attribution in each lead's QRS complexes and in the rest of the lead, for each diagnosis' output on its own pages against the same output on the ${n} NORMAL pages (Mann-Whitney test, Benjamini-Hochberg q < ${B.fdr} over every diagnosis, lead and segment). Positive: the model leans more on that part of the ECG when the defect is present.`;
+  const cols = D.leads.flatMap(l => ["QRS", "rest"].map(s => [l, s]));
+  const cell = {};
+  B.stats.forEach(r => { cell[r.diagnosis + "|" + r.lead + "|" + r.segment] = r; });
+  let h = "<tr><th>Diagnosis</th><th>Pages</th>" + D.leads.map(l => `<th colspan="2" style="text-align:center">${l}</th>`).join("") + "</tr>";
+  h += "<tr><th></th><th></th>" + cols.map(c => `<th style="font-weight:400">${c[1]}</th>`).join("") + "</tr>";
+  B.summary.forEach(s => {
+    const exp = B.expected[s.diagnosis] || [];
+    h += `<tr><td>${s.diagnosis}</td><td>${s.pages}</td>` + cols.map(([l, seg]) => {
+      const r = cell[s.diagnosis + "|" + l + "|" + seg], v = r ? +r.rank_biserial : 0, sig = r && +r.significant === 1;
+      const bg = sig ? `background:rgba(${v >= 0 ? p : q},${Math.min(0.9, Math.abs(v) * 1.6).toFixed(2)})` : "";
+      const outline = exp.includes(l) ? "outline:1.5px solid var(--fg);outline-offset:-2px;" : "";
+      return `<td class="cell" style="${bg};${outline}" title="q ${r ? (+r.q).toExponential(1) : "-"}">${sig ? (v >= 0 ? "+" : "") + v.toFixed(2) : ""}</td>`;
+    }).join("") + "</tr>";
+  });
+  document.getElementById("labelmap").innerHTML = h;
+  document.getElementById("labelsum").innerHTML = "<tr><th>Diagnosis</th><th>Pages</th><th>Share in QRS</th><th>Higher than on NORMAL pages</th><th>Lower than on NORMAL pages</th><th>Textbook leads</th><th>Found</th></tr>" +
+    B.summary.map(s => `<tr><td>${s.diagnosis}</td><td>${s.pages}</td><td>${s.qrs_share}</td><td style="text-align:left;white-space:normal;min-width:260px">${s.higher_than_normal}</td><td style="text-align:left;white-space:normal;min-width:200px">${s.lower_than_normal}</td><td>${s.expected_leads}</td><td>${s.expected_found}</td></tr>`).join("");
+}
 function render() {
   D.pages.forEach((_, i) => document.getElementById("page" + i).setAttribute("aria-pressed", i === page));
   D.methods.forEach(m => document.getElementById("m-" + m).setAttribute("aria-pressed", m === method));
   D.baselines.forEach(k => document.getElementById("b-" + k).setAttribute("aria-pressed", k === kind));
   document.getElementById("testhead").textContent = `Test pages (${D.test[kind].pages})`;
-  facts(); photo(); leads(); drop(); curve("del", "deletion"); curve("ins", "insertion"); auc(); leadmap();
+  facts(); photo(); leads(); drop(); bylabel(); curve("del", "deletion"); curve("ins", "insertion"); auc(); leadmap();
 }
 buttons(); render();
 let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(render, 150); });

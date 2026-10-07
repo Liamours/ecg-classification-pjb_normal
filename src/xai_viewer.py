@@ -93,7 +93,11 @@ def main() -> None:
         test[k] = {"fractions": fr, "pages": len({r["page"] for r in rows}),
                    "deletion": {m: curve(m, "deletion_prob") for m in methods + ["random"]}, "insertion": {m: curve(m, "insertion_prob") for m in methods + ["random"]},
                    "auc": read_csv(report / k / "faithfulness_summary.csv"), "lead_map": read_csv(report / k / "lead_map.csv")}
-    data = {"methods": methods, "names": NAMES, "leads": LEADS, "baselines": kinds, "fs": cfg["fs"] / STEP, "bin_s": BIN / cfg["fs"], "thresholds": thresholds, "pages": pages, "test": test}
+    ls = cfg["label_stats"]
+    by_label = {"baseline": ls["baseline"], "method": NAMES[ls["method"]], "fdr": ls["fdr"], "expected": ls["expected"],
+                "stats": read_csv(report / ls["baseline"] / "label_stats.csv"), "summary": read_csv(report / ls["baseline"] / "label_summary.csv")}
+    data = {"methods": methods, "names": NAMES, "leads": LEADS, "baselines": kinds, "fs": cfg["fs"] / STEP, "bin_s": BIN / cfg["fs"], "thresholds": thresholds, "pages": pages,
+            "test": test, "by_label": by_label}
     html = (REPO / "src" / "xai_viewer.html").read_text(encoding="utf-8").replace("__DATA__", json.dumps(data, separators=(",", ":")))
     (report / "xai_viewer.html").write_text(html, encoding="utf-8")
     print(f"{report / 'xai_viewer.html'}: {len(html) / 1e6:.1f} MB")

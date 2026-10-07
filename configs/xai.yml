@@ -18,6 +18,25 @@ baselines:                          # what a removed sample becomes, for Integra
 fs: 500
 faithfulness: {fractions: [0.0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0], seed: 42}   # deletion and insertion curves (Petsiuk et al. 2018): share of digitized samples removed or inserted, most attributed first; seed of the random-order reference
 lead_map: {method: integrated_gradients, min_pages: 3}   # share of attribution per lead for each true label of each test page, labels with at least 3 test pages
+label_stats:                        # src.xai_labels: per diagnosis, where the model's attribution differs from NORMAL pages, on every labeled page
+  baseline: blur
+  method: integrated_gradients      # the most faithful gradient method on the test pages (insertion area 1.2962, deletion 0.6504)
+  min_pages: 10                     # diagnoses with at least 10 pages
+  qrs_ms: [-50, 70]                 # QRS window around each detected R peak
+  qrs_band_hz: [5, 15]              # band of the QRS energy signal used to find R peaks per panel
+  rr_min_s: 0.25                    # shortest RR interval allowed (240 bpm, above a child's resting rate)
+  fdr: 0.05                         # Benjamini-Hochberg over every diagnosis, lead and segment
+  expected:                         # leads where the textbook ECG sign of each defect shows (Park, Pediatric Cardiology for Practitioners, ECG chapter)
+    ASD: [V1, V2]                   # rsR' pattern, right ventricular volume load
+    VSD: [V1, V2, V5, V6]           # left or both ventricles enlarged
+    PDA: [V5, V6]                   # left ventricular volume load
+    PS: [V1, V2]                    # right ventricular hypertrophy
+    TOF: [V1, V2]                   # right ventricular hypertrophy, right axis
+    PH: [V1, V2]                    # right ventricular hypertrophy
+    DORV: [V1, V2]                  # right ventricular hypertrophy
+    AVSD: [I, aVF]                  # left superior axis
+    TGA: [V1, V2]                   # right ventricular hypertrophy
+    COA: [V5, V6]                   # left ventricular hypertrophy
 pages:                              # example test pages shown on the photo: label of the example, relative path in the dataset
   correct NORMAL: NORMAL 20.12.2024/NORMAL (4).jpg
   correct NORMAL, Tambahan batch: NORMAL Tambahan/CamScanner 13-11-2024 00.00_66.jpg
@@ -33,7 +52,15 @@ digitizer:                          # re-digitizes the example pages with every 
   config: configs/digitize.yml
   layout: mac400_phone              # the layout of the canonical run
   device: cpu
-viewer_side: 1400                   # px, long side of the photos embedded in the viewer
+samples:                            # src.xai_samples: example pages on the shareable page (digitized leads only, no photo), Integrated Gradients with the blurred baseline
+  pages: [correct NORMAL, NORMAL called PJB, PDA found, ASD and PS found, TOF found]
+  method: integrated_gradients
+  baseline: blur
+  levels: 4                         # colour steps per sign of the attribution
+  smooth_s: 0.02                    # display only: attribution averaged over 20 ms so a QRS complex reads as one coloured stretch
+  top_leads: 3                      # leads with the largest probability drop when replaced by the baseline (whole-lead occlusion), named and set in bold
+  percentile: 98                    # display only: attribution divided by this percentile of its absolute value per page
+viewer_side: 1400                  # px, long side of the photos embedded in the viewer
 batch_size: 32
 out_dir: '@inferences/xai'
 report_dir: '@analyses/xai'
