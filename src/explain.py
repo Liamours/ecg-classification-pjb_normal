@@ -190,14 +190,16 @@ STYLE = ("<style>rect.box{fill:#fff;stroke:#dcdfe3}rect.lead{fill:#e8c84a}rect.b
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", type=Path, required=True)
+    ap.add_argument("--backend", choices=["torch", "onnx"], help="overrides `backend` of the config")
     ap.add_argument("pages", type=Path, nargs="+", help="digitized page folders holding record.csv and record.json")
     args = ap.parse_args()
     cfg = yaml.safe_load(args.config.read_text(encoding="utf-8"))
+    cfg["backend"] = args.backend or cfg["backend"]
     device = "cuda" if torch.cuda.is_available() else "cpu"
     net, labels, thresholds, parent, _ = load_model(cfg["model"], device)
     score = OnnxScorer(cfg["onnx"]) if cfg["backend"] == "onnx" else TorchScorer(net, device, cfg["batch_size"])
     groups = np.flatnonzero(parent < 0)
-    out_root = paths.resolve(cfg["out_dir"])
+    out_root = paths.resolve(cfg["out_dir"]) / cfg["backend"]
     for page in args.pages:
         rec = np.genfromtxt(page / "record.csv", delimiter=",", skip_header=1)[:, 1:].T
         e = explain(score, rec, groups, cfg)

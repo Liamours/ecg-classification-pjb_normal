@@ -7,7 +7,7 @@ ECGFounder's own Net1D (third_party/ecgfounder) and the checkpoint's `backbone.*
 src.finetune.Net runs, so the export needs none of the other model adapters. Writes into `out_dir` (configs/export_onnx.yml):
 
 - `classifier.onnx`, `classifier.ort`: float32; `.ort` is ONNX Runtime's mobile format with graph optimizations applied
-- `classifier_int8.onnx`, `classifier_int8.ort`: static int8 in QDQ format, per-channel weights, QInt8 activations and weights
+- `classifier_int8.onnx`, `classifier_int8.ort` (only with `int8: true`; it changed 46 of 149 test label sets): static int8 in QDQ format, per-channel weights, QInt8 activations and weights
   with reduce_range off (the ARM choice of the `quantize_static` docstring), calibrated on training pages of the model's split
 - `labels.json`: the 38 output names in order and the two thresholds
 
@@ -39,13 +39,25 @@ from src.thresholds import parents, predict
 REPO = Path(__file__).resolve().parents[1]
 
 
+def zero_pad_max_pool(self, x: torch.Tensor) -> torch.Tensor:
+    """Net1D's same-padding max-pool with its zero padding written as a concatenation. ONNX Runtime's graph optimizations
+    (every level) fold a Pad node into the following MaxPool, which then ignores the padded zeros: logits moved by up to 0.68
+    and 11 of 149 test pages changed label set. Same values as Net1D's own forward."""
+    p = max(0, self.kernel_size - 1)
+    z = x.new_zeros(*x.shape[:-1], 1)
+    return self.max_pool(torch.cat([z.expand(*x.shape[:-1], p // 2), x, z.expand(*x.shape[:-1], p - p // 2)], dim=-1))
+
+
 class Classifier(torch.nn.Module):
     """Net1D's embedding, then the 38-label linear layer: what src.finetune.Net computes for ECGFounder."""
 
     def __init__(self, n_labels: int, n_tasks: int):
         super().__init__()
         sys.path.insert(0, str(REPO / "third_party" / "ecgfounder"))
+        import net1d
         from net1d import Net1D
+
+        net1d.MyMaxPool1dPadSame.forward = zero_pad_max_pool
 
         self.backbone = Net1D(in_channels=12, base_filters=64, ratio=1, filter_list=[64, 160, 160, 400, 400, 1024, 1024], m_blocks_list=[2, 2, 2, 3, 3, 4, 4],
                               kernel_size=16, stride=2, groups_width=16, verbose=False, use_bn=False, use_do=False, n_classes=n_tasks, return_features=True)
@@ -92,19 +104,21 @@ def main() -> None:
     torch.onnx.export(net, (torch.zeros(1, 12, 5000),), str(fp32), input_names=["ecg"], output_names=["scores"], opset_version=cfg["opset"], dynamo=True)
     to_ort(fp32)
 
-    phone = np.load(paths.resolve(cfg["inputs"]["mac400-phone_photo"]))
-    folds = pd.read_csv(paths.resolve(train_cfg["folds"]))
-    split = folds[(folds["repeat"] == train_cfg["split"]["repeat"]) & (folds["fold"] == train_cfg["split"]["fold"])]
-    role = dict(zip(split.relative_path, split.role))
-    rel = list(phone["relative_path"])
-    train = [i for i, r in enumerate(rel) if role.get(r) == "train"]
-    calib = np.random.default_rng(cfg["seed"]).choice(train, cfg["calibration_pages"], replace=False)
-    pre, int8 = out / "classifier_pre.onnx", out / "classifier_int8.onnx"
-    quant_pre_process(str(fp32), str(pre))
-    quantize_static(str(pre), str(int8), Pages(phone["x"][calib]), quant_format=QuantFormat.QDQ, per_channel=True,
-                    activation_type=QuantType.QInt8, weight_type=QuantType.QInt8, reduce_range=False)
-    pre.unlink()
-    to_ort(int8)
+    files = ["classifier.ort"]
+    if cfg["int8"]:
+        phone = np.load(paths.resolve(cfg["inputs"]["mac400-phone_photo"]))
+        folds = pd.read_csv(paths.resolve(train_cfg["folds"]))
+        split = folds[(folds["repeat"] == train_cfg["split"]["repeat"]) & (folds["fold"] == train_cfg["split"]["fold"])]
+        role = dict(zip(split.relative_path, split.role))
+        train = [i for i, r in enumerate(phone["relative_path"]) if role.get(r) == "train"]
+        calib = np.random.default_rng(cfg["seed"]).choice(train, cfg["calibration_pages"], replace=False)
+        pre, int8 = out / "classifier_pre.onnx", out / "classifier_int8.onnx"
+        quant_pre_process(str(fp32), str(pre))
+        quantize_static(str(pre), str(int8), Pages(phone["x"][calib]), quant_format=QuantFormat.QDQ, per_channel=True,
+                        activation_type=QuantType.QInt8, weight_type=QuantType.QInt8, reduce_range=False)
+        pre.unlink()
+        to_ort(int8)
+        files.append("classifier_int8.ort")
 
     parent = parents(labels, REPO / train_cfg["groups_config"], train_cfg["merge"], train_cfg["unknown_label"])
     sets = []
@@ -115,8 +129,8 @@ def main() -> None:
         sets.append((name, z["x"][idx], ref))
     opts = ort.SessionOptions()
     opts.intra_op_num_threads, opts.inter_op_num_threads = cfg["threads"], 1
-    print(f"int8 calibrated on {len(calib)} training pages\n\n| File | MB | Pages | Largest probability difference | Pages whose label set changes |\n|---|---|---|---|---|")
-    for file in ("classifier.ort", "classifier_int8.ort"):
+    print("| File | MB | Pages | Largest probability difference | Pages whose label set changes |\n|---|---|---|---|---|")
+    for file in files:
         sess = ort.InferenceSession(str(out / file), opts, providers=["CPUExecutionProvider"])
         for name, x, ref in sets:
             prob = 1 / (1 + np.exp(-np.concatenate([sess.run(None, {"ecg": p[None]})[0] for p in x])))
