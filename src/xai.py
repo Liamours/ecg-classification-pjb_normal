@@ -36,39 +36,23 @@ from scipy.ndimage import gaussian_filter1d
 from captum.attr import DeepLift, GradientShap, InputXGradient, IntegratedGradients, LayerAttribution, LayerGradCam, NoiseTunnel, Saliency
 from PIL import Image, ImageOps
 
+from src import explain as explain_step
 from src import paths
-from src.finetune import build
+from src.explain import tile_index
 from src.linear_probe import label_matrix, load_folds, write_csv
 from src.models import LEADS
 from src.progress import Progress
-from src.thresholds import parents, predict
 
 REPO = Path(__file__).resolve().parents[1]
 MM_PER_S = 25.0
 
 
 def load_model(cfg: dict, device: str):
-    m = torch.load(paths.resolve(cfg["model"]), map_location="cpu", weights_only=True)
-    tc = m["config"]
-    net = build(tc["spec"], len(m["labels"]), device)
-    net.load_state_dict(m["model"])
-    net.eval()
-    for p in net.parameters():
-        p.requires_grad_(False)
-    return net, m["labels"], m["thresholds"], parents(m["labels"], REPO / tc["groups_config"], tc["merge"], tc["unknown_label"]), tc
+    return explain_step.load_model(cfg["model"], device)
 
 
 def read_record(page_dir: Path) -> np.ndarray:
     return np.genfromtxt(page_dir / "record.csv", delimiter=",", skip_header=1)[:, 1:].T
-
-
-def tile_index(rec: np.ndarray, n_in: int) -> list[np.ndarray]:
-    """Per lead, the record sample each input sample copies (`fit_length` with `tile`); empty for a lead with no data."""
-    out = []
-    for lead in rec:
-        v = np.flatnonzero(~np.isnan(lead))
-        out.append(np.resize(v, n_in) if len(v) else np.array([], int))
-    return out
 
 
 def fold(a: np.ndarray, idx: list[np.ndarray], n_rec: int) -> np.ndarray:
@@ -115,31 +99,10 @@ def attribute(net, x: torch.Tensor, base: torch.Tensor, target: int, name: str, 
 
 def occlusion(net, x: torch.Tensor, base: torch.Tensor, idx: list[np.ndarray], target: int, window: int, n_rec: int, bs: int) -> tuple[np.ndarray, np.ndarray]:
     """Record attribution from replacing `window` record samples of one lead at a time by the baseline (probability drop spread
-    over the stretch), and the drop when each whole lead is replaced."""
-    p0 = probs(net, x, target, bs)[0]
-    cuts, xs = [], []
-    for l, ix in enumerate(idx):
-        if not len(ix):
-            continue
-        v = np.unique(ix)
-        for s in range(v.min(), v.max() + 1, window):
-            sel = v[(v >= s) & (v < s + window)]
-            if len(sel):
-                xo, m = x.clone(), torch.from_numpy(np.isin(ix, sel))
-                xo[0, l, m] = base[0, l, m]
-                cuts.append((l, sel))
-                xs.append(xo)
-        xo = x.clone()
-        xo[0, l] = base[0, l]
-        cuts.append((l, None))
-        xs.append(xo)
-    drop = p0 - probs(net, torch.cat(xs), target, bs)
-    r, lead_drop = np.full((len(idx), n_rec), np.nan), np.full(len(idx), np.nan)
-    for (l, sel), d in zip(cuts, drop):
-        if sel is None:
-            lead_drop[l] = d
-        else:
-            r[l, sel] = d / len(sel)
+    over the stretch), and the drop when each whole lead is replaced (`src.explain.occlude`, the pipeline's own step)."""
+    blocks, lead_drop, _ = explain_step.occlude(explain_step.TorchScorer(net, x.device, bs), x[0].cpu().numpy(), base[0].cpu().numpy(), idx, target, window)
+    r = np.full((len(idx), n_rec), np.nan)
+    r[:, :blocks.shape[1]] = blocks
     return r, lead_drop
 
 

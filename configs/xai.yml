@@ -52,12 +52,10 @@ digitizer:                          # re-digitizes the example pages with every 
   config: configs/digitize.yml
   layout: mac400_phone              # the layout of the canonical run
   device: cpu
-samples:                            # src.xai_samples: example pages on the shareable page (digitized leads only, no photo), Integrated Gradients with the blurred baseline
+samples:                            # src.xai_samples: example pages on the shareable page (digitized leads only, no photo), drawn by src.explain.render: occlusion blocks and the most influential leads, blurred baseline
   pages: [correct NORMAL, NORMAL called PJB, PDA found, ASD and PS found, TOF found]
-  method: integrated_gradients
   baseline: blur
   levels: 4                         # colour steps per sign of the attribution
-  smooth_s: 0.02                    # display only: attribution averaged over 20 ms so a QRS complex reads as one coloured stretch
   top_leads: 3                      # leads with the largest probability drop when replaced by the baseline (whole-lead occlusion), named and set in bold
   percentile: 98                    # display only: attribution divided by this percentile of its absolute value per page
 viewer_side: 1400                  # px, long side of the photos embedded in the viewer

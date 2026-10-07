@@ -1,0 +1,11 @@
+model: '@inferences/finetune_single/model.pt'   # the final ECGFounder checkpoint (labels, thresholds, network)
+backend: torch                      # torch, or onnx: the export below runs the forward passes (ONNX Runtime, CPU)
+onnx: '@models/ecgfounder-finetune_single-onnx/model.onnx'
+fs: 500
+sigma_s: 0.1                        # blurred baseline: Gaussian SD along time (Sturmfels et al. 2020)
+window_s: 0.2                       # block length; about 220 forward passes per page with 12 leads of 3.5 s
+top_leads: 3                        # leads named as most influential (largest whole-lead drop above 0)
+levels: 4                           # shading steps of the blocks
+percentile: 98                      # block shading divided by this percentile of the page's block drops
+batch_size: 32
+out_dir: '@inferences/explain'
